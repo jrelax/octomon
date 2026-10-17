@@ -3787,7 +3787,12 @@ mod tests {
         write_bundle_to(&path, &s).unwrap();
 
         let mut z = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
-        let names: Vec<String> = z.file_names().map(str::to_string).collect();
+        // zip 9 yields each name as a Result<Cow<str>>; a bundle we just
+        // wrote has nothing malformed in it, so a failure here is a bug.
+        let names: Vec<String> = z
+            .file_names()
+            .map(|n| n.expect("bundle member name").into_owned())
+            .collect();
         assert!(names.contains(&"report.txt".to_string()), "got: {names:?}");
         assert!(names.contains(&"events.csv".to_string()), "got: {names:?}");
         // The members decompress and carry what was put in.
