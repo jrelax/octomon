@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { marked } from "marked";
+import { Marked, marked } from "marked";
 import { buildCards, CARD_FILE } from "./ogcard.mjs";
 import {
   AUTHOR,
@@ -92,6 +92,11 @@ function loadPosts() {
 
   const posts = [];
   const drafts = [];
+  // Draft posts rendered for a local preview only: never listed, never in
+  // the feed or sitemap, never a card. Their folders stay in .assetsignore,
+  // so the rendered page cannot deploy. Switched on by tools/serve.mjs.
+  const previews = [];
+  const previewDrafts = process.env.BLOG_DRAFTS === "1";
   for (const slug of dirs) {
     const file = join(BLOG, slug, "index.md");
     let raw;
@@ -105,7 +110,7 @@ function loadPosts() {
     for (const key of ["title", "description", "date"]) {
       if (!meta[key]) throw new Error(`blog/${slug}/index.md: missing "${key}" in frontmatter`);
     }
-    if (meta.draft === "true") {
+    if (meta.draft === "true" && !previewDrafts) {
       // Unpublishing has to remove the page, not merely stop writing it: a
       // stale index.html from an earlier build would otherwise stay live at
       // its own URL, unlisted but perfectly readable.
@@ -119,7 +124,7 @@ function loadPosts() {
       drafts.push(slug);
       continue;
     }
-    posts.push({
+    (meta.draft === "true" ? previews : posts).push({
       slug,
       title: meta.title,
       description: meta.description,
@@ -137,13 +142,40 @@ function loadPosts() {
   }
   // newest first, slug breaking ties so two posts on one day stay stable
   posts.sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : b.date.localeCompare(a.date)));
+  for (const p of previews) drafts.push(p.slug);
   posts.drafts = drafts;
+  posts.previews = previews;
   return posts;
+}
+
+// Every heading in a post body gets an id made from its text, so a section
+// can be linked to (/blog/technical-paper/#2-1-connection-quality), and a
+// "#" that appears on hover carries that link. Ids are deduplicated within a
+// post, and each post gets its own instance so the counter starts fresh.
+function headingAnchors() {
+  const seen = new Map();
+  return new Marked({
+    gfm: true,
+    renderer: {
+      heading({ tokens, depth }) {
+        const text = this.parser.parseInline(tokens);
+        const plain = text
+          .replace(/<[^>]+>/g, "")
+          .replace(/&amp;/g, "&")
+          .replace(/&[a-z#0-9]+;/g, "");
+        let id = plain.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+        const n = (seen.get(id) ?? 0) + 1;
+        seen.set(id, n);
+        if (n > 1) id = `${id}-${n}`;
+        return `<h${depth} id="${id}">${text} <a class="anchor" href="#${id}" aria-label="Link to this section">#</a></h${depth}>\n`;
+      },
+    },
+  });
 }
 
 function renderPost(post) {
   const url = `${ORIGIN}/blog/${post.slug}/`;
-  const html = marked.parse(post.body, { gfm: true });
+  const html = headingAnchors().parse(post.body);
   const hasImage = /<img\b/i.test(html);
   const body = `<main>
   <div class="pagehead">
@@ -396,6 +428,10 @@ function build({ force = false } = {}) {
   for (const post of posts) {
     writeFileSync(join(BLOG, post.slug, "index.html"), renderPost(post));
     console.log(`  /blog/${post.slug}  (${post.minutes} min)`);
+  }
+  for (const post of posts.previews ?? []) {
+    writeFileSync(join(BLOG, post.slug, "index.html"), renderPost(post));
+    console.log(`  /blog/${post.slug}  (${post.minutes} min)  DRAFT PREVIEW, unlisted`);
   }
   writeFileSync(join(BLOG, "index.html"), renderIndex(posts));
   writeFileSync(join(BLOG, "feed.xml"), renderFeed(posts));

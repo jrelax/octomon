@@ -31,7 +31,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -72,7 +72,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -159,6 +163,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }

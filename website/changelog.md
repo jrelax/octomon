@@ -7,6 +7,16 @@ Every release since the first one, newest first. Each version is also a
 [GitHub release](https://github.com/securitypedant/octomon/releases) with
 binaries for macOS, Linux and Windows.
 
+## 0.11.5 · 2026-10-16
+
+While writing the [technical paper](/blog/technical-paper/), I re-evaluated some decisions and found some bugs.
+
+- The ISP path rung no longer sits grey saying "no path monitor" while the hop rows it needed were in the table all along. Without a monitor it grades hops 2 to 4 from the rows discovery found at startup, with the built-in targets standing in as the far end, and the detail ends "[m] for every hop". Start a monitor and it reads the whole path instead. It is grey only when discovery found no answering hop past the gateway.
+- The same rung grades the IPv4 and IPv6 paths apart. A bug caused the v6 twins of the hop rows to be counted as extra hops, so the detail read "hops 2-7" on a three-hop path, and a v6 hop that dropped every probe could be excused as "silent" because a v4 hop beyond it answered. Now each family has its own path and its own far end. The rung takes the worse of the two and names v6 in a clause, so a v6-only fault reads as one.
+- Interface errors are judged as a share of frames over the last 20 seconds, and only once 100 frames have crossed the link in that window. One corrupted frame among fifty on an idle link used to read as 2% for that second and flash the link rung red. The lines now differ by medium, because the counters mean different things: a wire is amber from 0.1% and red from 1%, since a healthy cable runs at zero; Wi-Fi is amber from 2.5% and red from 5%, since radios count decryption failures and edge-of-range frames as errors. Cable errors have their own cause, "wired link", so the history and the alert JSON no longer call an Ethernet fault "Wi-Fi". The errs row says "too few frames to rate" on a quiet link instead of a percentage of nothing, and the report's `link_error_pct` is null until there is enough to rate.
+- Machine stats had too much power over the analysis. Thermal throttling was a degraded finding on its own, and as the only finding it painted the footer amber on a warm laptop, or on Windows whenever battery saver was on. A capped CPU can hold a speed test or an encrypted tunnel below line rate, but it does not lose or delay packets, so it is now a note, "cpu held back by the OS", like the other machine notes. The machine rung goes red only when the CPU is pegged and the machine is also swapping or held back: then the three notes collapse into one degraded finding, "machine saturated", because a pegged CPU is the one machine condition that disturbs the network readings themselves.
+- The edge check shows the network's AS number even when Cloudflare has no operator name for the prefix. Over IPv4 some prefixes carry the number only, and the missing name used to take the number with it. When the v6 answer names the same AS, that name is used for both.
+
 ## 0.11.4 · 2026-10-05
 
 What is eating the CPU.

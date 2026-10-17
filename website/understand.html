@@ -21,7 +21,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -62,7 +62,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -140,6 +144,11 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  .term h3 a { color: inherit; text-decoration: none; }
+  .term h3 a:hover, .term h3 a:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+  .term h3 a:hover::after { content: " #"; color: var(--octo-muted); font-weight: 400; }
+  /* deep links: /understand#jitter lands on the card and lights it up */
+  .term:target { border-color: var(--octo-green); }
   .term p { margin: 0 0 0.7em; color: var(--octo-muted); font-size: 0.95rem; }
   .term .more { font-family: var(--octo-mono); font-size: 0.85rem; }
 
@@ -253,8 +262,9 @@
   <section id="faq">
     <div class="wrap">
       <h2>FAQ</h2>
-      <p class="lede">The questions the dashboard tends to raise, answered the
-      way octomon actually works.</p>
+      <p class="lede">Short answers to the questions people ask about the
+      dashboard. For the full detail on every probe, threshold and rule, read
+      the <a href="/blog/technical-paper/">technical paper</a>.</p>
       <div class="faq">
 
         <details>
@@ -510,12 +520,12 @@
   <section id="glossary">
     <div class="wrap">
       <h2>Glossary</h2>
-      <p class="lede">The terms on octomon's screens, in plain language, each
-      with one good link for the full story.</p>
+      <p class="lede">What the terms on octomon's screens mean. Each one links
+      to a longer explanation if you want it.</p>
       <div class="terms">
 
-        <div class="term">
-          <h3>latency</h3>
+        <div class="term" id="latency">
+          <h3><a href="#latency">latency</a></h3>
           <p>How long data takes to get somewhere: the delay, not the volume.
           A connection can be huge and still slow to react: bandwidth is how
           wide the pipe is, latency is how long the pipe is. It's what makes
@@ -524,8 +534,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/performance/glossary/what-is-latency/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>RTT · round-trip time</h3>
+        <div class="term" id="rtt">
+          <h3><a href="#rtt">RTT · round-trip time</a></h3>
           <p>The time for a packet to reach a destination <em>and for the
           reply to come back</em>, what a ping measures, and what octomon's
           latency columns show. Measured in milliseconds; a wired LAN runs
@@ -534,8 +544,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/cdn/glossary/round-trip-time-rtt/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>TTFB · time to first byte</h3>
+        <div class="term" id="ttfb">
+          <h3><a href="#ttfb">TTFB · time to first byte</a></h3>
           <p>How long a real web request takes before the first byte of the
           answer arrives: DNS, the TCP handshake, TLS, and the server
           thinking, all in one number. It's what octomon's web strip charts
@@ -544,8 +554,8 @@
           <p class="more"><a href="https://developer.mozilla.org/en-US/docs/Glossary/Time_to_first_byte">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>jitter</h3>
+        <div class="term" id="jitter">
+          <h3><a href="#jitter">jitter</a></h3>
           <p>How much the latency <em>varies</em> from packet to packet. A
           steady 80&nbsp;ms is fine for a call; latency bouncing between 20
           and 300&nbsp;ms is not, even though it averages less; the receiver
@@ -554,8 +564,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Jitter">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>spread</h3>
+        <div class="term" id="spread">
+          <h3><a href="#spread">spread</a></h3>
           <p>How widely the round-trip times in the window are scattered
           around their average (the standard deviation, in milliseconds). It
           sits beside jitter in the Connection Quality title because they
@@ -566,8 +576,8 @@
           20, 60, 20, 60 on every probe has high jitter and modest spread.</p>
         </div>
 
-        <div class="term">
-          <h3>packet loss</h3>
+        <div class="term" id="packet-loss">
+          <h3><a href="#packet-loss">packet loss</a></h3>
           <p>The share of packets that never arrive. TCP hides small amounts
           by resending (you experience it as slowness, not absence), but
           real-time traffic can't wait for resends, so calls break up. octomon
@@ -576,8 +586,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Packet_loss">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>p95 · 95th percentile</h3>
+        <div class="term" id="p95">
+          <h3><a href="#p95">p95 · 95th percentile</a></h3>
           <p>The value 95% of samples stay under, so a p95 of 200&nbsp;ms
           means one ping in twenty was worse than that. Averages hide spikes;
           the p95 is roughly "how bad are the bad moments", which is usually
@@ -585,8 +595,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Percentile">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>bufferbloat</h3>
+        <div class="term" id="bufferbloat">
+          <h3><a href="#bufferbloat">bufferbloat</a></h3>
           <p>Latency caused by over-large queues in routers and modems: under
           load (a big upload, a cloud backup) packets wait in line, and your
           20&nbsp;ms connection quietly becomes 400&nbsp;ms. It's why video
@@ -595,8 +605,8 @@
           <p class="more"><a href="https://www.bufferbloat.net/projects/bloat/wiki/Introduction/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>DNS · domain name system</h3>
+        <div class="term" id="dns">
+          <h3><a href="#dns">DNS · domain name system</a></h3>
           <p>The internet's phone book: it turns names like
           <em>octomon.dev</em> into addresses machines can route to. Every web
           page starts with DNS lookups, so a slow or broken resolver makes the
@@ -606,8 +616,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/dns/what-is-dns/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>DHCP</h3>
+        <div class="term" id="dhcp">
+          <h3><a href="#dhcp">DHCP</a></h3>
           <p>How your device gets its network settings when it joins: the
           router leases it an IP address and tells it the gateway and DNS
           servers to use. When DHCP fails you get a self-assigned
@@ -616,8 +626,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>gateway</h3>
+        <div class="term" id="gateway">
+          <h3><a href="#gateway">gateway</a></h3>
           <p>The first hop out: the router your device sends everything to
           when the destination isn't on your local network; at home, your
           Wi-Fi router. If the gateway is unreachable, nothing beyond your own
@@ -626,8 +636,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Default_gateway">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>ICMP</h3>
+        <div class="term" id="icmp">
+          <h3><a href="#icmp">ICMP</a></h3>
           <p>The internet's control-message protocol, what ping and
           traceroute are built on. Useful because everything speaks it;
           misleading because routers deprioritize or block it as policy, so
@@ -637,8 +647,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/ddos/glossary/internet-control-message-protocol-icmp/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>MTU · maximum transmission unit</h3>
+        <div class="term" id="mtu">
+          <h3><a href="#mtu">MTU · maximum transmission unit</a></h3>
           <p>The largest packet a link will carry, typically 1500 bytes. When
           a link in the path is narrower (VPNs, PPPoE) and the messages that
           would say so get blocked, big packets vanish silently: a "path MTU
@@ -647,8 +657,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/network-layer/what-is-mtu/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>NAT · CGNAT</h3>
+        <div class="term" id="nat">
+          <h3><a href="#nat">NAT · CGNAT</a></h3>
           <p>Address translation: your router puts many devices behind one
           public IP. Carrier-grade NAT (CGNAT) is the same trick applied by
           your ISP to whole neighborhoods; you're behind <em>two</em> layers,
@@ -657,8 +667,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Network_address_translation">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>captive portal</h3>
+        <div class="term" id="captive-portal">
+          <h3><a href="#captive-portal">captive portal</a></h3>
           <p>The sign-in page hotel and airport networks put in front of the
           internet. Until you satisfy it, the network intercepts your traffic;
           DNS may answer and pings may fly, but nothing real gets through,
@@ -667,8 +677,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Captive_portal">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>traceroute · hops</h3>
+        <div class="term" id="traceroute">
+          <h3><a href="#traceroute">traceroute · hops</a></h3>
           <p>A trick that maps the path your packets take: send probes with
           increasing time-to-live values and each router in line reveals
           itself as it discards one. Each router is a "hop". It shows
@@ -677,8 +687,8 @@
           <p class="more"><a href="https://en.wikipedia.org/wiki/Traceroute">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>TTL · time to live</h3>
+        <div class="term" id="ttl">
+          <h3><a href="#ttl">TTL · time to live</a></h3>
           <p>A counter in every packet that each router decrements; at zero
           the packet is discarded. It exists to stop lost packets circling
           forever, and traceroute exploits it deliberately to make each
@@ -686,8 +696,8 @@
           <p class="more"><a href="https://www.cloudflare.com/learning/cdn/glossary/time-to-live-ttl/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>RSSI · dBm</h3>
+        <div class="term" id="rssi">
+          <h3><a href="#rssi">RSSI · dBm</a></h3>
           <p>Wi-Fi signal strength, in decibel-milliwatts: negative numbers
           where closer to zero is stronger: −40&nbsp;dBm is excellent,
           −70&nbsp;dBm is getting marginal, −85&nbsp;dBm is barely holding on.
@@ -696,14 +706,26 @@
           <p class="more"><a href="https://www.metageek.com/training/resources/understanding-rssi/">more →</a></p>
         </div>
 
-        <div class="term">
-          <h3>anycast</h3>
+        <div class="term" id="anycast">
+          <h3><a href="#anycast">anycast</a></h3>
           <p>One address, announced from many places at once; the routing
           system delivers you to the nearest. It's how 1.1.1.1 and most CDNs
           answer quickly worldwide, and why the "same" server can be a
           different machine from your hotel than from your home. octomon's
           speed-test history records which one actually served you.</p>
           <p class="more"><a href="https://www.cloudflare.com/learning/cdn/glossary/anycast-network/">more →</a></p>
+        </div>
+
+        <div class="term" id="unicast">
+          <h3><a href="#unicast">unicast</a></h3>
+          <p>The opposite of anycast, and the ordinary case: one address, one
+          machine, in one place. Your gateway, your ISP's routers and most of
+          the hops in a traceroute are unicast, so the round trip to them is
+          a real distance you can reason about: a slow unicast hop means
+          that hop, or the path to it, got slower, while the "same" anycast
+          target getting faster or slower may just mean the routing system
+          sent you to a different site.</p>
+          <p class="more"><a href="https://en.wikipedia.org/wiki/Unicast">more →</a></p>
         </div>
 
       </div>

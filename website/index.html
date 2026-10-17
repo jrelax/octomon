@@ -21,7 +21,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -64,7 +64,11 @@
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
   /* header */
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -460,10 +464,7 @@ sudo apt update &amp;&amp; sudo apt install octomon">copy</button>
           <div class="cmd"><div class="cmd-scroll">
             <div class="line"><span class="prompt">&gt;</span><code>winget install SimonThorpe.Octomon</code></div>
           </div></div>
-          <p class="note">x64 and ARM64, code-signed: free code signing provided by
-          <a href="https://signpath.io">SignPath.io</a>, certificate by
-          <a href="https://signpath.org">SignPath Foundation</a>
-          (<a href="/privacy#code-signing">our signing policy</a>). No winget? There is a
+          <p class="note">x64 and ARM64. No winget? There is a
           <a href="https://github.com/securitypedant/octomon#windows">PowerShell installer</a>,
           and zips are on <a href="https://github.com/securitypedant/octomon/releases">GitHub releases</a>.</p>
         </div>

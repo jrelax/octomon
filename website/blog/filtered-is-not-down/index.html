@@ -32,7 +32,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -73,7 +73,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -160,6 +164,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }
@@ -381,7 +394,7 @@
         for the plane and hotel case, where pings are mostly lost and the web
         still gets through. What I had not thought about was the difference between
         <em>mostly</em> and <em>entirely</em>.</p>
-        <h2>Every ping consistently lost is not heavy loss</h2>
+        <h2 id="every-ping-consistently-lost-is-not-heavy-loss">Every ping consistently lost is not heavy loss <a class="anchor" href="#every-ping-consistently-lost-is-not-heavy-loss" aria-label="Link to this section">#</a></h2>
         <p>On the plane, 40% ping loss is a product of satellite communication at over 400mph 
         and likely 200 people on the plane all trying to watch YouTube. Even a 90% loss is terrible but some traffic is still getting through (just). Web access stalls, emails arrive slowly, and &quot;degraded but usable&quot; is the honest reading.</p>
         <p>On the Azure VM, 100% ping loss is a policy. The connection is not degraded at
@@ -408,7 +421,7 @@
         that only carries v4 is how that tunnel is built, the same as a v4-only LAN,
         which raises nothing at all. So it is now a note in the analysis, no longer the connection&#39;s colour. 
         More about IPv6 later...</p>
-        <h2>What if web traffic is also failing?</h2>
+        <h2 id="what-if-web-traffic-is-also-failing">What if web traffic is also failing? <a class="anchor" href="#what-if-web-traffic-is-also-failing" aria-label="Link to this section">#</a></h2>
         <p>If ICMP fails, octomon falls back to TCP on port 443. But what if the network
         is filtering the web? Corporate networks and guest networks can sometimes do this.
         So ICMP fails, port 443 fails, the web check fails, and octomon would have
@@ -446,7 +459,7 @@
         a live view of what the connection can do, with the targets you added kept
         underneath. And port 80 open while 443 is dead gets its own wording, because
         that is the signature of a filter that only allows what it can inspect.</p>
-        <h2>And then IPv6</h2>
+        <h2 id="and-then-ipv6">And then IPv6 <a class="anchor" href="#and-then-ipv6" aria-label="Link to this section">#</a></h2>
         <p>While all of this was going on I switched IPv6 on for my home network, and
         it was clear I needed to improve how octomon handles IPv6. It was broken for the
         web check over v6 and the presence of a v6 route. It could say IPv6 was
@@ -482,7 +495,7 @@
         </figure>
 
 
-        <h2>What next?</h2>
+        <h2 id="what-next">What next? <a class="anchor" href="#what-next" aria-label="Link to this section">#</a></h2>
         <p>I&#39;m happy with the current state of features for octomon, so now I need to test
         on as many different networks as possible to make sure it works in all cases. 
         I could do with some help here, so please run octomon in your own environment

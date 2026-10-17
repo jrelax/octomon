@@ -32,7 +32,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -73,7 +73,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -160,6 +164,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }
@@ -371,7 +384,7 @@
       <article class="post">
         <p>Many network tools were written by somebody sitting at a desk. You can tell,
         because they all agree that 200 ms is bad. So I <a href="/blog/why-i-built-octomon/">wrote a tool</a> to help me understand more about the quality of my Internet connection.</p>
-        <h2>A threshold is an opinion about where you are</h2>
+        <h2 id="a-threshold-is-an-opinion-about-where-you-are">A threshold is an opinion about where you are <a class="anchor" href="#a-threshold-is-an-opinion-about-where-you-are" aria-label="Link to this section">#</a></h2>
         <p>At my desk at home, they are right. I have a Unifi <a href="https://store.ui.com/us/en/products/usw-flex-xg">USW Flex XG</a>
         switch connected to a copper to fiber converter, with a fiber run into my house terminating into a
         <a href="https://store.ui.com/us/en/products/usw-pro-xg-8-poe">USW Pro XG 8 PoE</a> that 
@@ -395,7 +408,7 @@
         the hotel, because the interesting thing there is a change, not a level.</p>
         <p>This was the second gap I ran into, after the one that made me
         <a href="/blog/why-i-built-octomon/">build octomon in the first place</a>.</p>
-        <h2>Learning a normal</h2>
+        <h2 id="learning-a-normal">Learning a normal <a class="anchor" href="#learning-a-normal" aria-label="Link to this section">#</a></h2>
         <p>So octomon fingerprints every network you join. On Wi-Fi that is the network name
         plus the router&#39;s hardware address, so the identity survives address changes and
         mesh roaming. On a wired link there is no name to use, so it is the router&#39;s
@@ -428,7 +441,7 @@
         annoyed by. You need both, and you need to say which one produced the verdict.</p>
         </li>
         </ul>
-        <h2>Weather, not alarms</h2>
+        <h2 id="weather-not-alarms">Weather, not alarms <a class="anchor" href="#weather-not-alarms" aria-label="Link to this section">#</a></h2>
         <p>Some networks are simply like that. A satellite backhaul with a 600 ms floor is
         not degraded, it is a satellite backhaul, and reporting it as a fault every
         minute is a tool arguing with physics.</p>
@@ -442,7 +455,7 @@
         The graphs are raw truth, every second, deliberately. The analysis holds a state
         until it has held across several evaluations, because one dropped ping is not an
         outage and a verdict that repaints itself every second is noise, not judgement.</p>
-        <h2>You can see what it learned</h2>
+        <h2 id="you-can-see-what-it-learned">You can see what it learned <a class="anchor" href="#you-can-see-what-it-learned" aria-label="Link to this section">#</a></h2>
         <p>Every location octomon has learned is listed in the app with its metrics and the
         date it was last seen, because a baseline you cannot inspect is just a number
         the tool made up and expects you to trust. If one is wrong, because you were
@@ -457,7 +470,7 @@
         <p>The same list is why switching networks is not disruptive. Move from the office
         to the train and the comparison moves with you, rather than the train being
         graded against the office.</p>
-        <h2>Usable, but degraded</h2>
+        <h2 id="usable-but-degraded">Usable, but degraded <a class="anchor" href="#usable-but-degraded" aria-label="Link to this section">#</a></h2>
         <p>Most tools have two states, working and broken, and plane Wi-Fi is neither.
         As I write this, I&#39;m flying home and the analysis says
         <span style="color: var(--octo-green)">● connection healthy</span> ·

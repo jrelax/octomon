@@ -32,7 +32,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -73,7 +73,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -160,6 +164,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }
@@ -391,7 +404,7 @@
         <p>So I created octomon: a btop-style terminal dashboard that puts
         your whole Internet connection on one screen and names the layer at fault,
         whether that is your Wi-Fi, your ISP or the Internet.</p>
-        <h2>The gap is not measurement</h2>
+        <h2 id="the-gap-is-not-measurement">The gap is not measurement <a class="anchor" href="#the-gap-is-not-measurement" aria-label="Link to this section">#</a></h2>
         <p>Every one of those tools is excellent, and every one of them is clear about a
         narrow thing. <code>ping</code> tells you the round-trip time to one address. <code>traceroute</code>
         gives you the path as it looked thirty seconds ago, with a wall of asterisks
@@ -410,7 +423,7 @@
         helping me learn as I built. Then the Internet went down again (Damn Proxmox server!) 
         and I decided to combine my learning of Rust with the desire to build a decent CLI
         based Internet connectivity tool.</p>
-        <h2>Introducing octomon</h2>
+        <h2 id="introducing-octomon">Introducing octomon <a class="anchor" href="#introducing-octomon" aria-label="Link to this section">#</a></h2>
         <p>I love <code>btop</code>. One glance and I can see what&#39;s going on with my machine. I wanted
         to recreate something similar, but to show everything related to my Internet connection.
         A quick search of github, brew, Google, the usual places I go to find software, 
@@ -420,7 +433,7 @@
         <li>Quickly display a summary of my Internet connectivity</li>
         <li>Triage the data collected and maybe generate a single opinion</li>
         </ul>
-        <h2>One screen instead of four</h2>
+        <h2 id="one-screen-instead-of-four">One screen instead of four <a class="anchor" href="#one-screen-instead-of-four" aria-label="Link to this section">#</a></h2>
         <p>What replaced the four terminals is not all that clever. Connection quality, bandwidth,
         network and machine performance, all on screen at once, each panel probing and grading its
         own layer, with the analysis sitting on top and composing them into one answer. In
@@ -437,7 +450,7 @@
         deliberately slower than they are, because one dropped ping is not an outage,
         and a verdict that repainted itself every second would be noise rather than
         judgement.</p>
-        <h2>Making sense of the data</h2>
+        <h2 id="making-sense-of-the-data">Making sense of the data <a class="anchor" href="#making-sense-of-the-data" aria-label="Link to this section">#</a></h2>
         <p>Your gateway might be dropping pings while every hop past it is clean: that&#39;s a
         router with a policy, not an outage, and airport, hotel and office networks do
         it constantly. Your resolver is slow but a public reference resolver answers
@@ -465,7 +478,7 @@
         <span style="color: var(--octo-green)">● connection healthy</span> ·
         <span style="color: var(--octo-red)">performance poor</span>.
         That&#39;s pretty much my experience.</p>
-        <h2>The thing four terminals cannot know</h2>
+        <h2 id="the-thing-four-terminals-cannot-know">The thing four terminals cannot know <a class="anchor" href="#the-thing-four-terminals-cannot-know" aria-label="Link to this section">#</a></h2>
         <p>I then realized another problem I didn&#39;t envisage. None of those tools knows where you are
         sitting. <code>ping</code> does not know that 200 ms is a disaster on office fiber and a
         good day on a plane, so it prints the number and leaves the arithmetic to you.
@@ -474,7 +487,7 @@
         absolute floors so that &quot;relative to normal&quot; cannot quietly excuse a network
         that has been bad since you arrived. I actually think that argument needs its own 
         post, so I wrote <a href="/blog/plane-wifi-is-not-broken/">one</a>.</p>
-        <h2>Why it lives in a terminal</h2>
+        <h2 id="why-it-lives-in-a-terminal">Why it lives in a terminal <a class="anchor" href="#why-it-lives-in-a-terminal" aria-label="Link to this section">#</a></h2>
         <p>Timing. Because I designed this primarily for people like me who understand networking.
         I typically reach for a tool like this when something is already wrong, and that
         is usually the worst possible moment to be asking for anything: somebody else&#39;s

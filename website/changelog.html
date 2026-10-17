@@ -30,7 +30,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -71,7 +71,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -158,6 +162,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }
@@ -213,6 +226,14 @@
     border-radius: var(--octo-radius-card);
   }
   .post figure { margin: 1.8em 0; }
+  /* video embed in a post: 16:9, framed like the figures */
+  .post .video-frame {
+    display: block; aspect-ratio: 16 / 9; width: 100%;
+    margin: 1.8em 0;
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-card);
+    background: var(--octo-deep);
+  }
   .post figcaption {
     font-family: var(--octo-mono); font-size: 0.82rem;
     color: var(--octo-muted); margin-top: 10px;
@@ -344,8 +365,18 @@
       "url": "https://octomon.dev/images/octomon-icon-tile.png"
     }
   },
-  "dateModified": "2026-10-05",
+  "dateModified": "2026-10-16",
   "hasPart": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "octomon",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "softwareVersion": "0.11.5",
+      "datePublished": "2026-10-16",
+      "releaseNotes": "https://octomon.dev/changelog#v0.11.5",
+      "url": "https://github.com/securitypedant/octomon/releases/tag/v0.11.5"
+    },
     {
       "@type": "SoftwareApplication",
       "name": "octomon",
@@ -850,7 +881,7 @@
         binaries for macOS, Linux and Windows.</p>
       </div>
       <ul class="versions">
-        <li class="vgroup"><span class="vlabel">0.11</span><a href="#v0.11.4">0.11.4</a><a href="#v0.11.3">0.11.3</a><a href="#v0.11.2">0.11.2</a><a href="#v0.11.1">0.11.1</a><a href="#v0.11.0">0.11.0</a></li>
+        <li class="vgroup"><span class="vlabel">0.11</span><a href="#v0.11.5">0.11.5</a><a href="#v0.11.4">0.11.4</a><a href="#v0.11.3">0.11.3</a><a href="#v0.11.2">0.11.2</a><a href="#v0.11.1">0.11.1</a><a href="#v0.11.0">0.11.0</a></li>
         <li class="vgroup"><span class="vlabel">0.10</span><a href="#v0.10.1">0.10.1</a><a href="#v0.10.0">0.10.0</a></li>
         <li class="vgroup"><span class="vlabel">0.9</span><a href="#v0.9.8">0.9.8</a><a href="#v0.9.7">0.9.7</a><a href="#v0.9.6">0.9.6</a><a href="#v0.9.5">0.9.5</a><a href="#v0.9.4">0.9.4</a><a href="#v0.9.3">0.9.3</a><a href="#v0.9.2">0.9.2</a><a href="#v0.9.1">0.9.1</a><a href="#v0.9.0">0.9.0</a></li>
         <li class="vgroup"><span class="vlabel">0.8</span><a href="#v0.8.2">0.8.2</a><a href="#v0.8.1">0.8.1</a><a href="#v0.8.0">0.8.0</a></li>
@@ -868,6 +899,19 @@
   <section>
     <div class="wrap">
       <div class="post">
+
+        <article class="release" id="v0.11.5">
+          <h2><a href="#v0.11.5">0.11.5</a></h2>
+          <p class="relmeta"><time datetime="2026-10-16">16 October 2026</time> · <a href="https://github.com/securitypedant/octomon/releases/tag/v0.11.5">release on GitHub</a></p>
+          <p class="relsummary">While writing the <a href="/blog/technical-paper/">technical paper</a>, I re-evaluated some decisions and found some bugs.</p>
+          <ul>
+          <li>The ISP path rung no longer sits grey saying &quot;no path monitor&quot; while the hop rows it needed were in the table all along. Without a monitor it grades hops 2 to 4 from the rows discovery found at startup, with the built-in targets standing in as the far end, and the detail ends &quot;[m] for every hop&quot;. Start a monitor and it reads the whole path instead. It is grey only when discovery found no answering hop past the gateway.</li>
+          <li>The same rung grades the IPv4 and IPv6 paths apart. A bug caused the v6 twins of the hop rows to be counted as extra hops, so the detail read &quot;hops 2-7&quot; on a three-hop path, and a v6 hop that dropped every probe could be excused as &quot;silent&quot; because a v4 hop beyond it answered. Now each family has its own path and its own far end. The rung takes the worse of the two and names v6 in a clause, so a v6-only fault reads as one.</li>
+          <li>Interface errors are judged as a share of frames over the last 20 seconds, and only once 100 frames have crossed the link in that window. One corrupted frame among fifty on an idle link used to read as 2% for that second and flash the link rung red. The lines now differ by medium, because the counters mean different things: a wire is amber from 0.1% and red from 1%, since a healthy cable runs at zero; Wi-Fi is amber from 2.5% and red from 5%, since radios count decryption failures and edge-of-range frames as errors. Cable errors have their own cause, &quot;wired link&quot;, so the history and the alert JSON no longer call an Ethernet fault &quot;Wi-Fi&quot;. The errs row says &quot;too few frames to rate&quot; on a quiet link instead of a percentage of nothing, and the report&#39;s <code>link_error_pct</code> is null until there is enough to rate.</li>
+          <li>Machine stats had too much power over the analysis. Thermal throttling was a degraded finding on its own, and as the only finding it painted the footer amber on a warm laptop, or on Windows whenever battery saver was on. A capped CPU can hold a speed test or an encrypted tunnel below line rate, but it does not lose or delay packets, so it is now a note, &quot;cpu held back by the OS&quot;, like the other machine notes. The machine rung goes red only when the CPU is pegged and the machine is also swapping or held back: then the three notes collapse into one degraded finding, &quot;machine saturated&quot;, because a pegged CPU is the one machine condition that disturbs the network readings themselves.</li>
+          <li>The edge check shows the network&#39;s AS number even when Cloudflare has no operator name for the prefix. Over IPv4 some prefixes carry the number only, and the missing name used to take the number with it. When the v6 answer names the same AS, that name is used for both.</li>
+          </ul>
+        </article>
 
         <article class="release" id="v0.11.4">
           <h2><a href="#v0.11.4">0.11.4</a></h2>

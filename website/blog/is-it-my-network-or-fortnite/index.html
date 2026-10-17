@@ -32,7 +32,7 @@
 <style>
   /* Every colour on this page is a token from tokens.css, no hex here. */
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -73,7 +73,11 @@
   }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
   header {
+    position: sticky; top: 0; z-index: 20;
     border-bottom: 1px solid var(--octo-line);
     background: var(--octo-ink);
   }
@@ -160,6 +164,15 @@
     font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
     color: var(--octo-green);
   }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
   .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
   .post li { margin: 0.5em 0; }
   .post li::marker { color: var(--octo-magenta); }
@@ -393,13 +406,13 @@
           allowfullscreen
           referrerpolicy="strict-origin-when-cross-origin"></iframe>
 
-        <h2>1. Start octomon before you start the game</h2>
+        <h2 id="1-start-octomon-before-you-start-the-game">1. Start octomon before you start the game <a class="anchor" href="#1-start-octomon-before-you-start-the-game" aria-label="Link to this section">#</a></h2>
         <p>octomon learns what your network normally looks like, so start it first for 
         10 mins before you start playing.
         Open a terminal, run <code>octomon</code>, and look at the title of the Network panel.
         It will say something like &quot;Network · learning 2/5m&quot;. After five 
         minutes (without any network issues) it drops the &quot;learning&quot; and from then on its network analysis is judged against <em>your</em> normal. While it learns, press <code>N</code> and give the network a name, e.g. &quot;Home&quot;. </p>
-        <h2>2. Start the game and find its traffic</h2>
+        <h2 id="2-start-the-game-and-find-its-traffic">2. Start the game and find its traffic <a class="anchor" href="#2-start-the-game-and-find-its-traffic" aria-label="Link to this section">#</a></h2>
         <p>Start Fortnite and get into a match. Now look at the Bandwidth panel in
         octomon and press <code>f</code> to make it full screen. 
         Below the graphs is the talkers table, the processes on your machine
@@ -419,7 +432,7 @@
           <figcaption>Press W on the busy address. Amazon as the registrant means you have found the game server.</figcaption>
         </figure>
 
-        <h2>3. Add the game server to Connection Quality</h2>
+        <h2 id="3-add-the-game-server-to-connection-quality">3. Add the game server to Connection Quality <a class="anchor" href="#3-add-the-game-server-to-connection-quality" aria-label="Link to this section">#</a></h2>
         <p>With the cursor on the busiest remote IP address, press <code>a</code>. octomon offers that address as a new target for the Connection Quality panel. Press Enter and it appears
         in the table with the built-in targets.</p>
         <p>Sometimes the server might be shown in red, and that&#39;s fine. 
@@ -434,7 +447,7 @@
           <figcaption>The path to the game server, monitored once a second. The silent stretches are routers that ignore pings; the hops that answer are the ones that matter.</figcaption>
         </figure>
 
-        <h2>4. Play</h2>
+        <h2 id="4-play">4. Play <a class="anchor" href="#4-play" aria-label="Link to this section">#</a></h2>
         <p>Now play. If you have a second monitor, put octomon on it, and you will find
         yourself glancing at it the way you glance at a clock. With one screen it is
         harder, but the routine still works: leave octomon running behind the game,
@@ -444,7 +457,7 @@
         history. Press <code>y</code> for the analysis, or <code>e</code> for the events timeline, and you
         can see what octomon saw at the moment the game stuttered, even if that was
         two minutes ago.</p>
-        <h2>5. Reading the answer</h2>
+        <h2 id="5-reading-the-answer">5. Reading the answer <a class="anchor" href="#5-reading-the-answer" aria-label="Link to this section">#</a></h2>
         <p><strong>Everything green, path clean, and the game still lagged.</strong> The footer says
         connection healthy, the built-in targets are at their usual few milliseconds, the
         monitored path to the game server shows no loss on any hop that answers. This
@@ -472,7 +485,7 @@
         <p><strong>Bandwidth spiking on a process that is not the game.</strong> Something on your machine 
         is downloading or uploading something. A backup to Google Drive maybe or a large Windows update. A saturated uplink turns into latency for
         everything, and octomon names the process.</p>
-        <h2>What you end up with</h2>
+        <h2 id="what-you-end-up-with">What you end up with <a class="anchor" href="#what-you-end-up-with" aria-label="Link to this section">#</a></h2>
         <p>Not a faster connection. What you get is the argument settled in the time it
         takes to respawn. When the answer is &quot;your side&quot;, octomon usually says which
         part, and when the answer is &quot;their side&quot;, maybe it&#39;s time to switch to another game.</p>

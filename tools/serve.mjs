@@ -17,6 +17,11 @@
 // /apt/* are not available here.
 
 import { spawn } from "node:child_process";
+
+// The preview renders draft posts too (unlisted, and their folders stay in
+// .assetsignore, so nothing rendered here can deploy). The builders this
+// server spawns inherit the variable.
+process.env.BLOG_DRAFTS = "1";
 import { createServer } from "node:http";
 import { existsSync, readFileSync, statSync, watch } from "node:fs";
 import { extname, join, normalize, dirname } from "node:path";
