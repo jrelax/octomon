@@ -1547,8 +1547,10 @@ pub struct Vitals {
     pub swap_total: u64,
     /// Thermal / power summary, platform-specific. Empty when unknown.
     pub thermal: String,
-    /// True when the OS reports thermal or performance throttling. Throttling
-    /// tanks throughput while CPU looks idle, which is otherwise baffling.
+    /// True when the OS reports the CPU is being held back: a thermal or
+    /// power limit on macOS, battery saver on Windows. A capped CPU can keep
+    /// a speed test or an encrypted tunnel below line rate; ordinary traffic
+    /// rarely notices. A note on throughput figures, never a cause of loss.
     pub throttled: bool,
     /// "AC Power" / "Battery Power" where known.
     pub power_source: String,
@@ -1612,18 +1614,40 @@ pub struct LinkErrors {
     pub tx_err_total: u64,
     pub rx_packets_per_sec: f64,
     pub tx_packets_per_sec: f64,
+    /// Recent samples as (seconds covered, frames carried, frames errored),
+    /// newest last, trimmed to [`Self::WINDOW_SECS`]. The share the analysis
+    /// judges is taken over this, not over one second: one corrupted frame
+    /// among fifty on an idle link is 2% for that second and nothing at all.
+    pub window: std::collections::VecDeque<(f64, u64, u64)>,
 }
 
 impl LinkErrors {
-    /// Errors as a share of packets carried — a rate alone means nothing
-    /// without knowing whether the link was busy.
-    pub fn error_pct(&self) -> f64 {
-        let packets = self.rx_packets_per_sec + self.tx_packets_per_sec;
-        let errors = self.rx_err_per_sec + self.tx_err_per_sec;
-        if packets + errors <= 0.0 {
-            return 0.0;
+    /// How much history the error share is judged over.
+    pub const WINDOW_SECS: f64 = 20.0;
+    /// No opinion until this many frames have crossed the link in the window:
+    /// a percentage of a handful of packets is noise, not a measurement.
+    pub const MIN_FRAMES: u64 = 100;
+
+    /// Record one collector sample.
+    pub fn record(&mut self, secs: f64, frames: u64, errors: u64) {
+        self.window.push_back((secs, frames, errors));
+        let mut total: f64 = self.window.iter().map(|w| w.0).sum();
+        while self.window.len() > 1 && total > Self::WINDOW_SECS {
+            if let Some(old) = self.window.pop_front() {
+                total -= old.0;
+            }
         }
-        errors / (packets + errors) * 100.0
+    }
+
+    /// Errors as a share of frames over the window, or `None` while too few
+    /// frames have passed to say. A rate alone means nothing without knowing
+    /// whether the link was busy, and a share of almost nothing means less.
+    pub fn error_pct(&self) -> Option<f64> {
+        let (frames, errors) = self
+            .window
+            .iter()
+            .fold((0u64, 0u64), |(f, e), w| (f + w.1, e + w.2));
+        (frames >= Self::MIN_FRAMES).then(|| errors as f64 / (frames + errors) as f64 * 100.0)
     }
 }
 
@@ -2277,6 +2301,40 @@ pub struct EdgeInfo {
     /// endpoint also reports city/protocol details; the client keeps only
     /// what its surfaces show.
     pub tcp_rtt_ms: Option<f64>,
+}
+
+impl AppState {
+    /// Whose network this is, as the edge sees it. The v4 answer leads; when
+    /// it carries the number but not the name and the v6 answer names the
+    /// same AS, the name is borrowed, since it is one network.
+    pub fn edge_operator(&self) -> Option<String> {
+        let e = self.edge.as_ref()?;
+        if e.isp.is_empty()
+            && let Some(e6) = &self.edge6
+            && e6.asn == e.asn
+            && !e6.isp.is_empty()
+        {
+            return e6.operator();
+        }
+        e.operator()
+    }
+}
+
+impl EdgeInfo {
+    /// "Sonic.net, LLC (AS46375)", "AS46375" when the edge knew the number
+    /// but not the name, `None` when it knew neither. Cloudflare's view of
+    /// an AS carries the organisation name for some prefixes and not others
+    /// (found in the field: a v4 prefix with the number only, its v6 twin
+    /// with both), so the number stands on its own rather than vanishing
+    /// with the missing name.
+    pub fn operator(&self) -> Option<String> {
+        match (self.isp.is_empty(), self.asn) {
+            (false, 0) => Some(self.isp.clone()),
+            (false, asn) => Some(format!("{} (AS{asn})", self.isp)),
+            (true, 0) => None,
+            (true, asn) => Some(format!("AS{asn}")),
+        }
+    }
 }
 
 impl EdgeInfo {

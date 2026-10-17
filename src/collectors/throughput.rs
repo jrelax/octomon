@@ -154,5 +154,6 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config) {
         e.tx_err_total += tx_err;
         e.rx_packets_per_sec = rx_pkt as f64 / secs;
         e.tx_packets_per_sec = tx_pkt as f64 / secs;
+        e.record(secs, rx_pkt + tx_pkt, rx_err + tx_err);
     }
 }

@@ -53,6 +53,7 @@ impl Episode {
                 | "captive-portal"
                 | "gateway"
                 | "link"
+                | "wired-link"
                 | "dns"
                 | "isp"
                 | "internet"
@@ -64,7 +65,8 @@ impl Episode {
             "no-link" => "link down",
             "captive-portal" => "captive portal",
             "gateway" => "gateway",
-            "link" => "Wi-Fi/link",
+            "link" => "Wi-Fi link",
+            "wired-link" => "wired link",
             "dns" => "DNS",
             "dns-hijack" => "DNS hijack",
             "isp" => "ISP path",

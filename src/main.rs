@@ -3234,11 +3234,14 @@ fn snapshot_text(s: &AppState) -> String {
     }
     let e = &s.link_errors;
     println!(
-        "  link {}: rx_err={} tx_err={} ({:.3}% of packets, {:.0} pkt/s)",
+        "  link {}: rx_err={} tx_err={} ({} of frames over the last {:.0} s, {:.0} pkt/s)",
         e.iface,
         e.rx_err_total,
         e.tx_err_total,
-        e.error_pct(),
+        e.error_pct()
+            .map(|p| format!("{p:.3}%"))
+            .unwrap_or_else(|| "too few frames to rate".to_string()),
+        crate::app::LinkErrors::WINDOW_SECS,
         e.rx_packets_per_sec + e.tx_packets_per_sec
     );
     out

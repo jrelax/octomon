@@ -49,7 +49,18 @@ pub mod thresholds {
     /// Below this the radio itself is almost certainly the problem.
     pub const RSSI_AWFUL_DBM: i32 = -85;
     pub const SNR_MIN_DB: i32 = 15;
-    pub const LINK_ERR_BAD_PCT: f64 = 1.0;
+    /// Interface errors as a share of frames, judged over the last
+    /// `LinkErrors::WINDOW_SECS` and only once `LinkErrors::MIN_FRAMES` have
+    /// passed. A wire should run at zero: carrier gear alarms "signal
+    /// degrade" from about one frame in a thousand, and at one in a hundred
+    /// the link is already losing traffic before IP sees it. A radio counts
+    /// decryption failures and edge-of-range frames as errors too, so the
+    /// same lines would cry wolf there; the practice among people who
+    /// monitor access points is a few percent before anyone looks.
+    pub const WIRED_ERR_WARN_PCT: f64 = 0.1;
+    pub const WIRED_ERR_BAD_PCT: f64 = 1.0;
+    pub const WIFI_ERR_WARN_PCT: f64 = 2.5;
+    pub const WIFI_ERR_BAD_PCT: f64 = 5.0;
     /// System clock offsets: a note from here, a finding from the second —
     /// certificate checks tolerate minutes, not much more, and time-based
     /// logins (TOTP) far less.
@@ -134,6 +145,8 @@ pub enum Cause {
     UsableDegraded,
     GatewayLan,
     WifiLink,
+    /// Frames corrupted on a cable: bad lead, bad port, duplex mismatch.
+    WiredLink,
     Dns,
     /// The network's own resolver is down while public ones answer: internet
     /// names resolve, the NAS and the printer do not.
@@ -176,6 +189,7 @@ impl Cause {
             Cause::UsableDegraded => "degraded-usable",
             Cause::GatewayLan => "gateway",
             Cause::WifiLink => "link",
+            Cause::WiredLink => "wired-link",
             Cause::Dns => "dns",
             Cause::LocalDns => "local-dns",
             Cause::DnsHijack => "dns-hijack",
@@ -274,6 +288,230 @@ impl Finding {
         self.cause == Cause::VpnCaveat
             || (self.cause == Cause::GatewayLan && self.severity == Severity::Info)
     }
+}
+
+/// One hop of the path as the analysis sees it, whichever is measuring it:
+/// the path monitor when one is running, else the hop rows that startup
+/// discovery put in the Connection Quality table and has probed every second
+/// since. The ISP-path rung and finding read this one shape, so starting a
+/// monitor refines the answer rather than being the only way to get one.
+struct PathHop {
+    ttl: u8,
+    addr: Option<std::net::IpAddr>,
+    /// Outcomes in the window: the finding wants more of them than the rung.
+    samples: usize,
+    /// Recent loss, once `th::MIN_SAMPLES` have been seen.
+    loss: Option<f64>,
+    /// A stand-in for the far end of the path rather than a hop on it: the
+    /// built-in targets, under discovery. They say whether traffic gets past
+    /// the early hops; they are not candidates for "loss begins here".
+    beyond: bool,
+    /// Which path this hop is on. The v4 and v6 paths share nothing past the
+    /// gateway, so a silent v6 hop says nothing about v4 forwarding and a
+    /// lossy one is a v6 problem, named as such.
+    v6: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathSource {
+    Monitor,
+    Discovery,
+    /// No monitor, and discovery found no answering hop past the gateway.
+    None,
+}
+
+fn path_hops(s: &AppState) -> (Vec<PathHop>, PathSource) {
+    if let Some(m) = &s.hop_monitor {
+        let hops = m
+            .hops
+            .iter()
+            .map(|h| {
+                let st = h.stat.as_ref();
+                PathHop {
+                    ttl: h.ttl,
+                    addr: h.addr,
+                    samples: st.map_or(0, |st| st.window.len()),
+                    loss: st
+                        .filter(|st| st.window.len() >= th::MIN_SAMPLES)
+                        .map(|st| st.recent_loss_pct(th::RECENT)),
+                    beyond: false,
+                    v6: m.dest.is_ipv6(),
+                }
+            })
+            .collect();
+        return (hops, PathSource::Monitor);
+    }
+    let measured =
+        |t: &TargetStat| (t.window.len() >= th::MIN_SAMPLES).then(|| t.recent_loss_pct(th::RECENT));
+    let mut hops: Vec<PathHop> = s
+        .targets
+        .iter()
+        .filter_map(|t| {
+            let ttl = t.hop_ttl().filter(|ttl| *ttl >= 2)?;
+            Some(PathHop {
+                ttl,
+                addr: Some(t.addr),
+                samples: t.window.len(),
+                loss: measured(t),
+                beyond: false,
+                v6: t.addr.is_ipv6(),
+            })
+        })
+        .collect();
+    let source = if hops.is_empty() {
+        PathSource::None
+    } else {
+        PathSource::Discovery
+    };
+    // The far end of each family's path: the v4 built-in targets, and their
+    // auto-added v6 twins.
+    hops.extend(
+        s.targets
+            .iter()
+            .filter(|t| {
+                (!t.discovered && !s.is_lan_addr(t.addr) && t.addr.is_ipv4()) || t.is_v6_anchor()
+            })
+            .map(|t| PathHop {
+                ttl: u8::MAX,
+                addr: Some(t.addr),
+                samples: t.window.len(),
+                loss: measured(t),
+                beyond: true,
+                v6: t.addr.is_ipv6(),
+            }),
+    );
+    hops.sort_by_key(|h| h.ttl);
+    (hops, source)
+}
+
+/// One family's early path (hops 2 to 4), graded.
+struct FamilyPath {
+    /// Recent loss of each early hop that is measured and not silent.
+    early: Vec<f64>,
+    /// Early hops answering nothing while something beyond them answers.
+    silent: usize,
+    /// Something past the gateway answers at all.
+    forwards: bool,
+    /// The furthest early hop with an opinion, for "hops 2-N".
+    last_ttl: u8,
+}
+
+/// `None` when the family has no hops on the path at all.
+fn grade_path(hops: &[PathHop], v6: bool) -> Option<FamilyPath> {
+    let fam: Vec<&PathHop> = hops.iter().filter(|h| h.v6 == v6).collect();
+    if !fam.iter().any(|h| !h.beyond) {
+        return None;
+    }
+    let healthy = |h: &PathHop| h.loss.is_some_and(|l| l < th::LOSS_BAD_PCT);
+    let answers_beyond = |ttl: u8| fam.iter().any(|o| o.ttl > ttl && healthy(o));
+    let mut silent = 0usize;
+    let mut last_ttl = 2u8;
+    let early: Vec<f64> = fam
+        .iter()
+        .filter(|h| !h.beyond && h.ttl >= 2 && h.ttl <= 4)
+        .filter_map(|h| {
+            let loss = h.loss?;
+            last_ttl = last_ttl.max(h.ttl);
+            if loss >= 100.0 && answers_beyond(h.ttl) {
+                silent += 1;
+                return None;
+            }
+            Some(loss)
+        })
+        .collect();
+    Some(FamilyPath {
+        early,
+        silent,
+        forwards: fam.iter().any(|o| o.ttl > 1 && healthy(o)),
+        last_ttl,
+    })
+}
+
+impl FamilyPath {
+    fn worst(&self) -> f64 {
+        self.early.iter().copied().fold(0.0_f64, f64::max)
+    }
+
+    fn status(&self) -> RungStatus {
+        if self.early.is_empty() {
+            if self.silent > 0 || self.forwards {
+                RungStatus::Ok
+            } else {
+                RungStatus::Unknown
+            }
+        } else if self.worst() >= th::LOSS_BAD_PCT {
+            RungStatus::Bad
+        } else if self.worst() >= th::LOSS_WARN_PCT {
+            RungStatus::Warn
+        } else {
+            RungStatus::Ok
+        }
+    }
+
+    /// The rung's own words for this family.
+    fn detail(&self) -> String {
+        if self.early.is_empty() && self.silent == 0 {
+            // Something is measuring; the early hops just never answered
+            // the walk — routine behind carrier-grade or hypervisor NAT.
+            if self.forwards {
+                "early hops never answer (ICMP-silent) · path forwards".to_string()
+            } else {
+                "watching the path — no hops answering yet".to_string()
+            }
+        } else if self.early.is_empty() {
+            format!(
+                "{} hop{} silent (ICMP policy) · path forwards",
+                self.silent,
+                if self.silent == 1 { "" } else { "s" }
+            )
+        } else {
+            format!(
+                "hops 2-{} · worst loss {:.0}%{}",
+                self.last_ttl,
+                self.worst(),
+                if self.silent > 0 {
+                    format!(" · {} silent", self.silent)
+                } else {
+                    String::new()
+                }
+            )
+        }
+    }
+
+    /// The same, as a clause after the other family's detail.
+    fn clause(&self, name: &str) -> String {
+        if self.early.is_empty() && self.silent == 0 {
+            if self.forwards {
+                format!(" · {name} early hops silent, path forwards")
+            } else {
+                format!(" · {name} hops not answering yet")
+            }
+        } else if self.early.is_empty() {
+            format!(" · {name} {} silent, path forwards", self.silent)
+        } else {
+            format!(
+                " · {name} worst loss {:.0}%{}",
+                self.worst(),
+                if self.silent > 0 {
+                    format!(", {} silent", self.silent)
+                } else {
+                    String::new()
+                }
+            )
+        }
+    }
+}
+
+/// Bad over Warn over Ok; an unknown second family never greys a rung the
+/// first family has graded.
+fn worse(a: RungStatus, b: RungStatus) -> RungStatus {
+    let rank = |r: RungStatus| match r {
+        RungStatus::Bad => 3,
+        RungStatus::Warn => 2,
+        RungStatus::Ok => 1,
+        RungStatus::Unknown => 0,
+    };
+    if rank(b) > rank(a) { b } else { a }
 }
 
 /// The rank order: causes before their symptoms, then severity, then
@@ -1147,6 +1385,8 @@ pub fn evaluate(s: &AppState) -> Triage {
     }
 
     // --- physical link (Wi-Fi radio / cable errors) ---
+    // `None` while the window holds too few frames to rate: a quiet link is
+    // not a clean link, but it is not a dirty one either.
     let err_pct = s.link_errors.error_pct();
     if s.netinfo.medium == LinkMedium::WiFi && s.signal.present {
         let rssi = s.signal.rssi_dbm;
@@ -1155,7 +1395,7 @@ pub fn evaluate(s: &AppState) -> Triage {
             .noise_dbm
             .is_some_and(|noise| rssi - noise < th::SNR_MIN_DB);
         let weak = rssi <= th::RSSI_BAD_DBM || low_snr;
-        if weak || err_pct > th::LINK_ERR_BAD_PCT {
+        if weak || err_pct.is_some_and(|e| e >= th::WIFI_ERR_BAD_PCT) {
             let hurting = !gw_fine && gw_health != Health::NoData && !gw_drops_icmp;
             let mut evidence = vec![format!(
                 "rssi {rssi} dBm{}, tx {:.0} Mb/s",
@@ -1174,8 +1414,8 @@ pub fn evaluate(s: &AppState) -> Triage {
                     b.display_name()
                 ));
             }
-            if err_pct > th::LINK_ERR_BAD_PCT {
-                evidence.push(format!("interface errors: {err_pct:.1}% of packets"));
+            if let Some(e) = err_pct.filter(|e| *e >= th::WIFI_ERR_WARN_PCT) {
+                evidence.push(format!("interface errors: {e:.1}% of frames"));
             }
             // Contrast: the gateway suffers with it. Corroboration: the radio
             // is unambiguously bad, or the baseline says this is far below
@@ -1207,16 +1447,36 @@ pub fn evaluate(s: &AppState) -> Triage {
                 }
             });
         }
-    } else if s.netinfo.medium.is_wired() && err_pct > th::LINK_ERR_BAD_PCT {
+    } else if s.netinfo.medium.is_wired()
+        && let Some(e) = err_pct
+        && e >= th::WIRED_ERR_WARN_PCT
+    {
+        // A wire should run at zero. From a tenth of a percent it is worth a
+        // note; from one percent frames are being lost before IP sees them.
+        let bad = e >= th::WIRED_ERR_BAD_PCT;
         findings.push(Finding {
-            cause: Cause::WifiLink,
-            severity: Severity::Degraded,
+            cause: Cause::WiredLink,
+            severity: if bad {
+                Severity::Degraded
+            } else {
+                Severity::Info
+            },
             confidence: Confidence::Likely,
-            summary: format!("link errors ({err_pct:.1}% of packets)"),
-            evidence: vec![format!(
-                "{}: {} rx / {} tx errors — bad cable or duplex mismatch territory",
-                s.link_errors.iface, s.link_errors.rx_err_total, s.link_errors.tx_err_total
-            )],
+            summary: if bad {
+                format!("link errors ({e:.1}% of frames)")
+            } else {
+                format!("link errors creeping in ({e:.2}% of frames)")
+            },
+            evidence: vec![
+                format!(
+                    "{}: {} rx / {} tx errors since start — bad cable or duplex mismatch territory",
+                    s.link_errors.iface, s.link_errors.rx_err_total, s.link_errors.tx_err_total
+                ),
+                format!(
+                    "share judged over the last {:.0} s; a healthy wire runs at zero",
+                    crate::app::LinkErrors::WINDOW_SECS
+                ),
+            ],
             subject: String::new(),
             symptom: false,
             since: None,
@@ -1537,32 +1797,28 @@ pub fn evaluate(s: &AppState) -> Triage {
         // "Begins" means it persists to every later hop that answers — a lossy
         // hop followed by clean ones is only rate-limiting its own ICMP replies
         // while forwarding fine, the oldest false positive in path analysis.
-        let early_bad_hop = s.hop_monitor.as_ref().and_then(|m| {
-            let loss_of = |h: &crate::app::MonitoredHop| {
-                h.stat
-                    .as_ref()
-                    .filter(|st| st.window.len() >= 10)
-                    .map(|st| st.recent_loss_pct(th::RECENT))
-            };
-            m.hops
-                .iter()
-                .filter(|h| h.ttl >= 2 && h.ttl <= 4)
-                .find(|h| {
-                    let Some(loss) = loss_of(h) else { return false };
-                    if loss < th::LOSS_BAD_PCT {
-                        return false;
-                    }
-                    let mut later = m
-                        .hops
-                        .iter()
-                        .filter(|o| o.ttl > h.ttl)
-                        .filter_map(loss_of)
-                        .peekable();
-                    // No measured hop beyond it: the destinations are failing
-                    // (we are inside `wide`), so the loss did carry through.
-                    later.peek().is_none() || later.all(|l| l >= th::LOSS_BAD_PCT)
-                })
-        });
+        // The same rule reads the discovered hop rows when no monitor is
+        // running; the monitor only sees more of the path.
+        let (path, _) = path_hops(s);
+        let loss_of = |h: &PathHop| h.loss.filter(|_| h.samples >= 10);
+        // `wide` is the v4 consensus, so only the v4 path can explain it.
+        let early_bad_hop = path
+            .iter()
+            .filter(|h| !h.beyond && !h.v6 && h.ttl >= 2 && h.ttl <= 4)
+            .find(|h| {
+                let Some(loss) = loss_of(h) else { return false };
+                if loss < th::LOSS_BAD_PCT {
+                    return false;
+                }
+                let mut later = path
+                    .iter()
+                    .filter(|o| !o.beyond && !o.v6 && o.ttl > h.ttl)
+                    .filter_map(loss_of)
+                    .peekable();
+                // No measured hop beyond it: the destinations are failing
+                // (we are inside `wide`), so the loss did carry through.
+                later.peek().is_none() || later.all(|l| l >= th::LOSS_BAD_PCT)
+            });
         if let Some(h) = early_bad_hop {
             let addr = h
                 .addr
@@ -2161,26 +2417,13 @@ pub fn evaluate(s: &AppState) -> Triage {
 
     // --- machine (caveat-class: co-reported, never the sole confident answer) ---
     let v = &s.vitals;
-    if v.throttled {
-        findings.push(Finding {
-            cause: Cause::Machine,
-            severity: Severity::Degraded,
-            confidence: Confidence::Strong,
-            summary: "thermal throttling active".to_string(),
-            evidence: vec![
-                "the OS is limiting performance — throughput collapses while CPU reads idle"
-                    .to_string(),
-            ],
-            subject: "thermal".to_string(),
-            symptom: false,
-            since: None,
-        });
-    }
+    let cpu_hot = v.cpu_pct >= th::CPU_HOT_PCT;
+    let mem_hot = v.mem_pressure_pct >= th::MEM_HOT_PCT;
     // Whole-machine load only: one saturated core is a compile or an encode,
     // not a reason packets are late, and it would read as "machine under
     // load (cpu 36%)" — a note nobody believes.
     let hottest = v.hottest_core().map(|(_, pct)| pct).unwrap_or(0.0);
-    if v.cpu_pct >= th::CPU_HOT_PCT {
+    let cpu_evidence = || {
         let mut evidence = vec![format!("cpu {:.0}%, hottest core {hottest:.0}%", v.cpu_pct)];
         // Name the culprits: "under load" is a symptom, the process is the
         // answer, and it is what the person will go and close.
@@ -2193,32 +2436,89 @@ pub fn evaluate(s: &AppState) -> Triage {
                 .collect();
             evidence.push(format!("busiest: {}", busiest.join(", ")));
         }
+        evidence
+    };
+    let mem_evidence = || {
+        format!(
+            "memory {:.0}% unavailable, swap {} MiB used",
+            v.mem_pressure_pct,
+            v.swap_used / 1_048_576
+        )
+    };
+    let throttle_evidence =
+        || "cpu held back by a thermal or power limit — what is left of it is pegged".to_string();
+
+    // A pegged CPU is the one machine condition that disturbs the network
+    // readings themselves: probe timing slips and replies queue, so latency
+    // and jitter inflate for reasons the network knows nothing about. On its
+    // own that is a note. With the machine also swapping, or the OS holding
+    // the clock back, what remains is saturated and every reading above this
+    // rung is suspect: one Degraded finding, the three facts as its evidence.
+    if cpu_hot && (mem_hot || v.throttled) {
+        let mut evidence = cpu_evidence();
+        if mem_hot {
+            evidence.push(mem_evidence());
+        }
+        if v.throttled {
+            evidence.push(throttle_evidence());
+        }
+        evidence.push("network readings taken on a saturated machine are unreliable".to_string());
         findings.push(Finding {
             cause: Cause::Machine,
-            severity: Severity::Info,
+            severity: Severity::Degraded,
             confidence: Confidence::Likely,
-            summary: format!("machine under load (cpu {:.0}%)", v.cpu_pct),
+            summary: format!("machine saturated (cpu {:.0}%)", v.cpu_pct),
             evidence,
-            subject: "cpu".to_string(),
+            subject: "machine".to_string(),
             symptom: false,
             since: None,
         });
-    }
-    if v.mem_pressure_pct >= th::MEM_HOT_PCT {
-        findings.push(Finding {
-            cause: Cause::Machine,
-            severity: Severity::Info,
-            confidence: Confidence::Likely,
-            summary: format!("memory nearly full ({:.0}%)", v.mem_pressure_pct),
-            evidence: vec![format!(
-                "memory {:.0}% unavailable, swap {} MiB used",
-                v.mem_pressure_pct,
-                v.swap_used / 1_048_576
-            )],
-            subject: "memory".to_string(),
-            symptom: false,
-            since: None,
-        });
+    } else {
+        // Notes, each on its own: a capped CPU can hold a speed test or an
+        // encrypted tunnel below line rate, but it does not lose or delay
+        // packets, and ordinary traffic rarely notices it. Throttling used
+        // to be Degraded by itself, which as the only finding painted the
+        // footer amber on a warm laptop (or, on Windows, whenever battery
+        // saver was on).
+        if v.throttled {
+            findings.push(Finding {
+                cause: Cause::Machine,
+                severity: Severity::Info,
+                confidence: Confidence::Likely,
+                summary: "cpu held back by the OS".to_string(),
+                evidence: vec![
+                    "a thermal or power limit — speed tests and encrypted tunnels may run below line rate"
+                        .to_string(),
+                ],
+                subject: "thermal".to_string(),
+                symptom: false,
+                since: None,
+            });
+        }
+        if cpu_hot {
+            findings.push(Finding {
+                cause: Cause::Machine,
+                severity: Severity::Info,
+                confidence: Confidence::Likely,
+                summary: format!("machine under load (cpu {:.0}%)", v.cpu_pct),
+                evidence: cpu_evidence(),
+                subject: "cpu".to_string(),
+                symptom: false,
+                since: None,
+            });
+        }
+        if mem_hot {
+            findings.push(Finding {
+                cause: Cause::Machine,
+                severity: Severity::Info,
+                confidence: Confidence::Likely,
+                summary: format!("memory nearly full ({:.0}%)", v.mem_pressure_pct),
+                evidence: vec![mem_evidence()],
+                subject: "memory".to_string(),
+                symptom: false,
+                since: None,
+            });
+        }
     }
 
     // Drop the loss- and latency-driven findings raised from samples taken
@@ -2658,10 +2958,15 @@ fn build_rungs(
 
     // Machine.
     let v = &s.vitals;
-    // Warn exactly when the machine finding fires — one rulebook.
-    let m_status = if v.throttled {
+    // One rulebook with the findings: red exactly when the "machine
+    // saturated" finding fires (CPU pegged plus swapping or held back), amber
+    // when any one condition is a note on its own. A machine that is merely
+    // busy, warm or full explains a slow transfer, not a broken connection.
+    let cpu_hot = v.cpu_pct >= th::CPU_HOT_PCT;
+    let mem_hot = v.mem_pressure_pct >= th::MEM_HOT_PCT;
+    let m_status = if cpu_hot && (mem_hot || v.throttled) {
         RungStatus::Bad
-    } else if v.cpu_pct >= th::CPU_HOT_PCT || v.mem_pressure_pct >= th::MEM_HOT_PCT {
+    } else if v.throttled || cpu_hot || mem_hot {
         RungStatus::Warn
     } else if v.cores.is_empty() {
         RungStatus::Unknown
@@ -2681,13 +2986,16 @@ fn build_rungs(
                 "cpu usage {:.0}% · avail memory {:.0}%{}",
                 v.cpu_pct,
                 (100.0 - v.mem_pressure_pct).clamp(0.0, 100.0),
-                if v.throttled { " · THROTTLED" } else { "" }
+                if v.throttled { " · cpu held back" } else { "" }
             )
         },
     });
 
     // Link: first whether there is one at all, then its quality.
     let err_pct = s.link_errors.error_pct();
+    let err_detail = err_pct
+        .map(|e| format!(" · errors {e:.1}%"))
+        .unwrap_or_default();
     let (l_status, l_detail) = match s.netinfo.medium {
         _ if link == LinkState::NoRoute => (
             RungStatus::Bad,
@@ -2706,9 +3014,11 @@ fn build_rungs(
         ),
         LinkMedium::WiFi if s.signal.present => {
             let rssi = s.signal.rssi_dbm;
-            let status = if rssi <= th::RSSI_BAD_DBM || err_pct > th::LINK_ERR_BAD_PCT {
+            let err_bad = err_pct.is_some_and(|e| e >= th::WIFI_ERR_BAD_PCT);
+            let err_warn = err_pct.is_some_and(|e| e >= th::WIFI_ERR_WARN_PCT);
+            let status = if rssi <= th::RSSI_BAD_DBM || err_bad {
                 RungStatus::Bad
-            } else if rssi <= th::RSSI_WEAK_DBM {
+            } else if rssi <= th::RSSI_WEAK_DBM || err_warn {
                 RungStatus::Warn
             } else {
                 RungStatus::Ok
@@ -2716,19 +3026,19 @@ fn build_rungs(
             (
                 status,
                 format!(
-                    "Wi-Fi rssi {rssi} dBm · tx {:.0} Mb/s · errors {err_pct:.1}%",
+                    "Wi-Fi rssi {rssi} dBm · tx {:.0} Mb/s{err_detail}",
                     s.signal.tx_rate_mbps
                 ),
             )
         }
         m if m.is_wired() => (
-            if err_pct > th::LINK_ERR_BAD_PCT {
-                RungStatus::Bad
-            } else {
-                RungStatus::Ok
+            match err_pct {
+                Some(e) if e >= th::WIRED_ERR_BAD_PCT => RungStatus::Bad,
+                Some(e) if e >= th::WIRED_ERR_WARN_PCT => RungStatus::Warn,
+                _ => RungStatus::Ok,
             },
             format!(
-                "{}{} · errors {err_pct:.1}%",
+                "{}{}{err_detail}",
                 m.label(),
                 s.netinfo
                     .link_speed_bps
@@ -2898,104 +3208,48 @@ fn build_rungs(
         }
     });
 
-    // ISP path (first hops beyond the gateway, via the hop monitor when
-    // running). A hop that answers *nothing* while a later hop — or the
-    // destination — still answers is ICMP policy, not loss: the packets
-    // demonstrably pass through it. Those hops are counted as silent instead
-    // of being allowed to paint the rung red with a loss no one experiences.
-    let mut silent = 0usize;
-    // Whether traffic demonstrably gets past the gateway — a later hop or the
-    // destination itself answering. Distinguishes "early hops are ICMP-silent"
-    // from "nothing past the gateway answers at all".
-    let mut path_forwards = false;
-    let early: Vec<f64> = s
-        .hop_monitor
-        .as_ref()
-        .map(|m| {
-            let healthy = |o: &crate::app::MonitoredHop| {
-                o.stat.as_ref().is_some_and(|st| {
-                    st.window.len() >= th::MIN_SAMPLES
-                        && st.recent_loss_pct(th::RECENT) < th::LOSS_BAD_PCT
-                })
-            };
-            let answers_beyond = |ttl: u8| m.hops.iter().any(|o| o.ttl > ttl && healthy(o));
-            path_forwards = m
-                .hops
-                .iter()
-                .any(|o| (o.ttl > 1 || o.addr == Some(m.dest)) && healthy(o));
-            m.hops
-                .iter()
-                .filter(|h| h.ttl >= 2 && h.ttl <= 4)
-                .filter_map(|h| {
-                    let st = h
-                        .stat
-                        .as_ref()
-                        .filter(|st| st.window.len() >= th::MIN_SAMPLES)?;
-                    let loss = st.recent_loss_pct(th::RECENT);
-                    if loss >= 100.0 && answers_beyond(h.ttl) {
-                        silent += 1;
-                        return None;
-                    }
-                    Some(loss)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    rungs.push(if s.hop_monitor.is_none() {
+    // ISP path (first hops beyond the gateway): the path monitor when one is
+    // running, else the hop rows discovery found at startup and has probed
+    // ever since. A hop that answers *nothing* while a later hop — or the far
+    // end — still answers is ICMP policy, not loss: the packets demonstrably
+    // pass through it. Those hops are counted as silent instead of being
+    // allowed to paint the rung red with a loss no one experiences. The v4
+    // and v6 paths are graded apart: the rung takes the worse, and the detail
+    // leads with v4 and names v6 in a clause, so a v6-only fault reads as
+    // one.
+    let (path, source) = path_hops(s);
+    rungs.push(if source == PathSource::None {
         Rung {
             area: Area::IspPath,
             status: RungStatus::Unknown,
-            detail: "no path monitor — [m] to watch every hop".to_string(),
-        }
-    } else if early.is_empty() && silent == 0 {
-        // The monitor IS running; the early hops just never answered the
-        // walk — routine behind carrier-grade or hypervisor NAT. Saying "no
-        // path monitor" here read as the tool ignoring the one the user
-        // started.
-        if path_forwards {
-            Rung {
-                area: Area::IspPath,
-                status: RungStatus::Ok,
-                detail: "early hops never answer (ICMP-silent) · path forwards".to_string(),
-            }
-        } else {
-            Rung {
-                area: Area::IspPath,
-                status: RungStatus::Unknown,
-                detail: "watching the path — no hops answering yet".to_string(),
-            }
-        }
-    } else if early.is_empty() {
-        // Every measured early hop is ICMP-silent while the path forwards.
-        Rung {
-            area: Area::IspPath,
-            status: RungStatus::Ok,
-            detail: format!(
-                "{silent} hop{} silent (ICMP policy) · path forwards",
-                if silent == 1 { "" } else { "s" }
-            ),
+            detail: "no early hop answered discovery — [m] to watch every hop".to_string(),
         }
     } else {
-        let worst = early.iter().copied().fold(0.0_f64, f64::max);
-        let status = if worst >= th::LOSS_BAD_PCT {
-            RungStatus::Bad
-        } else if worst >= th::LOSS_WARN_PCT {
-            RungStatus::Warn
+        let v4 = grade_path(&path, false);
+        let v6 = grade_path(&path, true);
+        // Discovery sees hops 2 to 4 and nothing beyond; say so, and how to
+        // see the whole path.
+        let via = if source == PathSource::Discovery {
+            " · [m] for every hop"
         } else {
-            RungStatus::Ok
+            ""
+        };
+        let (status, detail) = match (v4, v6) {
+            (Some(a), Some(b)) => (
+                worse(a.status(), b.status()),
+                format!("{}{}{via}", a.detail(), b.clause("v6")),
+            ),
+            (Some(a), None) => (a.status(), format!("{}{via}", a.detail())),
+            (None, Some(b)) => (b.status(), format!("v6 {}{via}", b.detail())),
+            (None, None) => (
+                RungStatus::Unknown,
+                "watching the path — no hops answering yet".to_string(),
+            ),
         };
         Rung {
             area: Area::IspPath,
             status,
-            detail: format!(
-                "hops 2-{} · worst loss {worst:.0}%{}",
-                2 + early.len() + silent - 1,
-                if silent > 0 {
-                    format!(" · {silent} silent")
-                } else {
-                    String::new()
-                }
-            ),
+            detail,
         }
     });
 
@@ -3482,8 +3736,8 @@ pub fn checks(s: &AppState) -> Vec<Check> {
         // country and protocol details live in the Network panel's data,
         // not here.
         let mut detail = e.colo_label();
-        if !e.isp.is_empty() {
-            detail.push_str(&format!(" · {} (AS{})", e.isp, e.asn));
+        if let Some(op) = s.edge_operator() {
+            detail.push_str(&format!(" · {op}"));
         }
         if let Some(r) = e.tcp_rtt_ms {
             detail.push_str(&format!(" · edge rtt {r:.0}ms"));
@@ -5643,19 +5897,333 @@ mod tests {
         assert!(c.contains(&Cause::Machine), "but the CPU is still reported");
     }
 
-    /// Even a *severe* machine finding stays behind network causes: throttling
-    /// is Degraded like the gateway here, and only the caveat rule breaks the tie.
+    /// A machine finding stays behind network causes whatever its severity.
+    /// Throttling is a note now, so severity alone would sort it last; the
+    /// caveat rule is what guarantees it even if that changes again.
     #[test]
     fn caveat_class_never_outranks_a_network_cause() {
         let mut s = healthy_state();
         s.vitals.throttled = true;
         let gw = s.targets.iter_mut().find(|t| t.discovered).unwrap();
         for _ in 0..3 {
-            gw.record_loss(); // ~13% recent loss: Degraded, same tier as throttling
+            gw.record_loss(); // ~13% recent loss: Degraded
         }
         let t = evaluate(&s);
         assert_eq!(causes(&t)[0], Cause::GatewayLan);
         assert!(causes(&t).contains(&Cause::Machine));
+    }
+
+    /// A warm laptop on a perfect connection is a note, not a problem: the
+    /// footer keeps "connection healthy", and the machine rung reads amber
+    /// like the other machine notes rather than red.
+    #[test]
+    fn throttling_alone_is_a_note_and_an_amber_rung() {
+        let mut s = healthy_state();
+        s.vitals.throttled = true;
+        let t = evaluate(&s);
+        let f = &t.findings[0];
+        assert_eq!(f.cause, Cause::Machine);
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.summary.contains("held back"), "{}", f.summary);
+        let rung = t.rungs.iter().find(|r| r.area == Area::Machine).unwrap();
+        assert_eq!(rung.status, RungStatus::Warn);
+        assert!(rung.detail.contains("cpu held back"), "{}", rung.detail);
+    }
+
+    /// CPU pegged plus either of the other two: the readings above the rung
+    /// are suspect, so this is the one machine state that goes red, as a
+    /// single Degraded finding carrying all the facts rather than three notes.
+    #[test]
+    fn pegged_cpu_plus_throttling_or_swapping_is_saturated_and_red() {
+        for (mem, throttled) in [(95.0, false), (10.0, true), (95.0, true)] {
+            let mut s = healthy_state();
+            s.vitals.cpu_pct = 96.0;
+            s.vitals.mem_pressure_pct = mem;
+            s.vitals.throttled = throttled;
+            let t = evaluate(&s);
+            let machine: Vec<&Finding> = t
+                .findings
+                .iter()
+                .filter(|f| f.cause == Cause::Machine)
+                .collect();
+            assert_eq!(machine.len(), 1, "one finding, not a pile of notes");
+            assert_eq!(machine[0].severity, Severity::Degraded);
+            assert!(
+                machine[0].summary.starts_with("machine saturated"),
+                "{}",
+                machine[0].summary
+            );
+            let rung = t.rungs.iter().find(|r| r.area == Area::Machine).unwrap();
+            assert_eq!(
+                rung.status,
+                RungStatus::Bad,
+                "mem {mem} throttled {throttled}"
+            );
+        }
+    }
+
+    /// Without the CPU pegged, swapping and throttling together are still two
+    /// notes and an amber rung: neither disturbs the probes.
+    #[test]
+    fn swapping_and_throttling_without_cpu_stay_notes() {
+        let mut s = healthy_state();
+        s.vitals.mem_pressure_pct = 95.0;
+        s.vitals.throttled = true;
+        let t = evaluate(&s);
+        assert!(t.findings.iter().all(|f| f.severity == Severity::Info));
+        assert_eq!(
+            t.findings
+                .iter()
+                .filter(|f| f.cause == Cause::Machine)
+                .count(),
+            2
+        );
+        let rung = t.rungs.iter().find(|r| r.area == Area::Machine).unwrap();
+        assert_eq!(rung.status, RungStatus::Warn);
+    }
+
+    /// Cable errors are judged over the window, in tiers, under their own
+    /// cause: a note from a tenth of a percent, degraded from one percent,
+    /// and never from a handful of frames on an idle link.
+    #[test]
+    fn wired_errors_are_tiered_windowed_and_not_wifi() {
+        let link_rung = |t: &Triage| {
+            t.rungs
+                .iter()
+                .find(|r| r.area == Area::Link)
+                .unwrap()
+                .status
+        };
+        let wired = || {
+            let mut s = healthy_state();
+            s.netinfo.medium = LinkMedium::Ethernet;
+            s
+        };
+
+        // Too few frames to rate: one bad frame in forty is not 2.5%.
+        let mut s = wired();
+        s.link_errors.record(1.0, 40, 1);
+        let t = evaluate(&s);
+        assert!(!causes(&t).contains(&Cause::WiredLink));
+        assert_eq!(link_rung(&t), RungStatus::Ok);
+
+        // 0.3% over a busy window: a note and an amber rung.
+        let mut s = wired();
+        for _ in 0..10 {
+            s.link_errors.record(1.0, 1000, 3);
+        }
+        let t = evaluate(&s);
+        let f = t
+            .findings
+            .iter()
+            .find(|f| f.cause == Cause::WiredLink)
+            .unwrap();
+        assert_eq!(f.severity, Severity::Info);
+        assert!(f.summary.contains("creeping"), "{}", f.summary);
+        assert_eq!(link_rung(&t), RungStatus::Warn);
+
+        // 2% over the window: degraded, red, and filed as a wired cause so
+        // the history never calls a cable fault "Wi-Fi".
+        let mut s = wired();
+        for _ in 0..10 {
+            s.link_errors.record(1.0, 1000, 20);
+        }
+        let t = evaluate(&s);
+        let f = t
+            .findings
+            .iter()
+            .find(|f| f.cause == Cause::WiredLink)
+            .unwrap();
+        assert_eq!(f.severity, Severity::Degraded);
+        assert_eq!(f.cause.label(), "wired-link");
+        assert!(!causes(&t).contains(&Cause::WifiLink));
+        assert_eq!(link_rung(&t), RungStatus::Bad);
+    }
+
+    /// Radios count frames a wire never would, so their lines sit higher:
+    /// 2% on Wi-Fi is clean, 3% is amber, 6% is red.
+    #[test]
+    fn wifi_error_lines_sit_higher_than_wired() {
+        let link_rung = |t: &Triage| {
+            t.rungs
+                .iter()
+                .find(|r| r.area == Area::Link)
+                .unwrap()
+                .status
+        };
+        for (per_thousand, want) in [
+            (20, RungStatus::Ok),
+            (30, RungStatus::Warn),
+            (60, RungStatus::Bad),
+        ] {
+            let mut s = healthy_state();
+            s.netinfo.medium = LinkMedium::WiFi;
+            s.signal.present = true;
+            s.signal.rssi_dbm = -50;
+            for _ in 0..10 {
+                s.link_errors.record(1.0, 1000, per_thousand);
+            }
+            let t = evaluate(&s);
+            assert_eq!(link_rung(&t), want, "{per_thousand} per thousand");
+        }
+    }
+
+    fn discovered_hop(ttl: u8, addr: [u8; 4], ok: usize, lost: usize) -> TargetStat {
+        let mut t = probe(&format!("hop {ttl}→1.1.1.1"), addr, ok, lost);
+        t.discovered = true;
+        t
+    }
+
+    /// With no monitor running, the rung reads the hop rows discovery put
+    /// in the table rather than shrugging: the monitor refines the answer,
+    /// it is not the only way to get one.
+    #[test]
+    fn isp_rung_reads_discovered_hops_without_a_monitor() {
+        let isp = |t: &Triage| {
+            let r = t.rungs.iter().find(|r| r.area == Area::IspPath).unwrap();
+            (r.status, r.detail.clone())
+        };
+
+        // Discovery found nothing past the gateway: unknown, with the hint.
+        let (status, detail) = isp(&evaluate(&healthy_state()));
+        assert_eq!(status, RungStatus::Unknown);
+        assert!(detail.contains("[m]"), "{detail}");
+
+        // Three clean discovered hops: green, and honest about the source.
+        let mut s = healthy_state();
+        s.targets.push(discovered_hop(2, [203, 0, 113, 2], 20, 0));
+        s.targets.push(discovered_hop(3, [203, 0, 113, 3], 20, 0));
+        s.targets.push(discovered_hop(4, [203, 0, 113, 4], 20, 0));
+        let (status, detail) = isp(&evaluate(&s));
+        assert_eq!(status, RungStatus::Ok, "{detail}");
+        assert!(
+            detail.contains("hops 2-4") && detail.contains("worst loss 0%"),
+            "{detail}"
+        );
+        assert!(detail.contains("[m] for every hop"), "{detail}");
+
+        // Hop 3 answering nothing while hop 4 and the anchors answer is
+        // policy, not loss: still green, counted as silent.
+        let mut s = healthy_state();
+        s.targets.push(discovered_hop(2, [203, 0, 113, 2], 20, 0));
+        s.targets.push(discovered_hop(3, [203, 0, 113, 3], 0, 20));
+        s.targets.push(discovered_hop(4, [203, 0, 113, 4], 20, 0));
+        let (status, detail) = isp(&evaluate(&s));
+        assert_eq!(status, RungStatus::Ok, "{detail}");
+        assert!(detail.contains("1 silent"), "{detail}");
+
+        // Hop 2 losing a fifth of its probes: red.
+        let mut s = healthy_state();
+        s.targets.push(discovered_hop(2, [203, 0, 113, 2], 16, 4));
+        s.targets.push(discovered_hop(3, [203, 0, 113, 3], 20, 0));
+        let (status, detail) = isp(&evaluate(&s));
+        assert_eq!(status, RungStatus::Bad, "{detail}");
+    }
+
+    /// The v6 twins of the hop rows are a separate path: a silent v6 hop
+    /// never masquerades as a silent v4 one, the range never counts twins
+    /// as extra hops, and v6 loss is named as v6.
+    #[test]
+    fn isp_rung_grades_v4_and_v6_paths_apart() {
+        let isp = |t: &Triage| {
+            let r = t.rungs.iter().find(|r| r.area == Area::IspPath).unwrap();
+            (r.status, r.detail.clone())
+        };
+        let v6_hop = |ttl: u8, last: u16, ok: usize, lost: usize| {
+            let mut t = TargetStat::new(
+                format!("hop {ttl}→1.1.1.1 v6"),
+                IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, last)),
+            );
+            t.discovered = true;
+            for _ in 0..ok {
+                t.record_reply(10.0);
+            }
+            for _ in 0..lost {
+                t.record_loss();
+            }
+            t
+        };
+
+        // Clean v4 path; v6 hop 2 silent while v6 hop 3 answers.
+        let mut s = healthy_state();
+        for ttl in 2..=4u8 {
+            s.targets
+                .push(discovered_hop(ttl, [203, 0, 113, ttl], 20, 0));
+        }
+        s.targets.push(v6_hop(2, 2, 0, 20));
+        s.targets.push(v6_hop(3, 3, 20, 0));
+        let (status, detail) = isp(&evaluate(&s));
+        assert_eq!(status, RungStatus::Ok, "{detail}");
+        assert!(detail.starts_with("hops 2-4 · worst loss 0%"), "{detail}");
+        assert!(!detail.contains("2-7"), "{detail}");
+        assert!(detail.contains("v6 worst loss 0%, 1 silent"), "{detail}");
+
+        // Clean v4 path, v6 hop 3 losing a fifth: red, and v6 named.
+        let mut s = healthy_state();
+        for ttl in 2..=4u8 {
+            s.targets
+                .push(discovered_hop(ttl, [203, 0, 113, ttl], 20, 0));
+        }
+        s.targets.push(v6_hop(2, 2, 20, 0));
+        s.targets.push(v6_hop(3, 3, 16, 4));
+        let (status, detail) = isp(&evaluate(&s));
+        assert_eq!(status, RungStatus::Bad, "{detail}");
+        assert!(detail.contains("v6 worst loss 20%"), "{detail}");
+    }
+
+    /// The "loss begins at hop N" localisation works from discovered rows
+    /// too: anchors failing, hop 3 and hop 4 lossy, hop 2 clean.
+    #[test]
+    fn isp_hop_finding_localises_from_discovered_rows() {
+        let mut s = healthy_state();
+        for t in s.targets.iter_mut().filter(|t| !t.discovered) {
+            for _ in 0..15 {
+                t.record_loss();
+            }
+        }
+        s.targets.push(discovered_hop(2, [203, 0, 113, 2], 20, 0));
+        s.targets.push(discovered_hop(3, [203, 0, 113, 3], 10, 10));
+        s.targets.push(discovered_hop(4, [203, 0, 113, 4], 10, 10));
+        let t = evaluate(&s);
+        let f = t
+            .findings
+            .iter()
+            .find(|f| f.cause == Cause::IspHop)
+            .unwrap();
+        assert!(f.summary.contains("hop 3"), "{}", f.summary);
+    }
+
+    /// The edge knew the AS number but not the name over v4: the number
+    /// still shows, and the name is borrowed from the v6 answer when that
+    /// names the same AS.
+    #[test]
+    fn edge_operator_survives_a_missing_name() {
+        use crate::app::EdgeInfo;
+        let edge = |isp: &str| EdgeInfo {
+            ip: "203.0.113.9".into(),
+            asn: 46375,
+            isp: isp.into(),
+            colo: "LAX".into(),
+            colo_city: "Los Angeles".into(),
+            tcp_rtt_ms: Some(16.0),
+        };
+        let mut s = healthy_state();
+        s.edge = Some(edge(""));
+        let row = checks(&s).into_iter().find(|c| c.name == "edge").unwrap();
+        assert!(row.detail.contains("AS46375"), "{}", row.detail);
+        assert!(
+            !row.detail.contains("(AS"),
+            "no empty name before the number: {}",
+            row.detail
+        );
+
+        s.edge6 = Some(edge("Sonic.net, LLC"));
+        let row = checks(&s).into_iter().find(|c| c.name == "edge").unwrap();
+        assert!(
+            row.detail.contains("Sonic.net, LLC (AS46375)"),
+            "{}",
+            row.detail
+        );
     }
 
     #[test]

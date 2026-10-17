@@ -277,8 +277,9 @@ pub fn console_font_has_glyphs(chars: &[char]) -> Option<bool> {
     windows::console_font_has_glyphs(chars)
 }
 
-/// Thermal / power state. Throttling collapses throughput while CPU reads idle,
-/// which is otherwise one of the more baffling failure modes to diagnose.
+/// Thermal / power state. A capped CPU can hold a speed test or an encrypted
+/// tunnel below line rate, which is worth a note beside a poor throughput
+/// figure; it does not lose or delay packets.
 pub struct ThermalState {
     /// Short human summary, e.g. "nominal" or "CPU limited to 70%".
     pub summary: String,

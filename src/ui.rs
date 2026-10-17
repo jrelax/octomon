@@ -5329,18 +5329,11 @@ fn netinfo_details(f: &mut Frame, s: &AppState, area: Rect, focused: bool) {
     // Cloudflare PoP serving you plus its own TCP measurement of this
     // machine (the far end saying how far away you are, no ICMP involved).
     if let Some(e) = &s.edge {
-        if !e.isp.is_empty() {
-            let mut spans = vec![
+        if let Some(op) = s.edge_operator() {
+            lines.push(Line::from(vec![
                 Span::styled(format!("{:<9}", "isp"), Style::new().fg(theme::dim())),
-                Span::styled(e.isp.clone(), Style::new().fg(theme::text())),
-            ];
-            if e.asn != 0 {
-                spans.push(Span::styled(
-                    format!(" (AS{})", e.asn),
-                    Style::new().fg(theme::dim()),
-                ));
-            }
-            lines.push(Line::from(spans));
+                Span::styled(op, Style::new().fg(theme::text())),
+            ]));
         }
         let mut spans = vec![
             Span::styled(format!("{:<9}", "edge"), Style::new().fg(theme::dim())),
@@ -6439,15 +6432,23 @@ fn link_error_line(e: &crate::app::LinkErrors) -> Line<'static> {
     let pct = e.error_pct();
     spans.push(Span::styled(
         format!("rx {} tx {}", e.rx_err_total, e.tx_err_total),
-        Style::new().fg(if pct >= 1.0 {
+        Style::new().fg(if pct.is_some_and(|p| p >= 1.0) {
             Color::Red
         } else {
             theme::warn()
         }),
     ));
-    // A rate means nothing without knowing whether the link was busy.
+    // A rate means nothing without knowing whether the link was busy, and
+    // the share is judged over a window, so an idle link says it is idle
+    // rather than inflating one bad frame into a percentage.
     spans.push(Span::styled(
-        format!("  {pct:.2}% of packets"),
+        match pct {
+            Some(p) => format!(
+                "  {p:.2}% of frames, last {:.0} s",
+                crate::app::LinkErrors::WINDOW_SECS
+            ),
+            None => "  too few frames to rate".to_string(),
+        },
         Style::new().fg(theme::dim()),
     ));
     Line::from(spans)
@@ -8534,19 +8535,28 @@ mod tests {
             iface: "en0".into(),
             rx_err_total: 12,
             tx_err_total: 3,
-            rx_err_per_sec: 1.0,
-            tx_err_per_sec: 0.0,
-            rx_packets_per_sec: 900.0,
-            tx_packets_per_sec: 1100.0,
+            ..Default::default()
         };
+        s.link_errors.record(1.0, 2000, 1);
         let out = draw(&s, 120, 30);
         assert!(out.contains("rx 12 tx 3"));
         // A raw rate means nothing without knowing how busy the link was.
-        assert!(out.contains("% of packets"));
-        assert!((s.link_errors.error_pct() - 0.04998).abs() < 0.001);
+        assert!(out.contains("% of frames"));
+        assert!((s.link_errors.error_pct().unwrap() - 0.04998).abs() < 0.001);
+
+        // A near-idle link has totals but no share: a percentage of a
+        // handful of frames would be noise dressed as a measurement.
+        let mut quiet = LinkErrors {
+            rx_err_total: 1,
+            ..Default::default()
+        };
+        quiet.record(1.0, 40, 1);
+        assert_eq!(quiet.error_pct(), None);
+        s.link_errors = quiet;
+        assert!(draw(&s, 120, 30).contains("too few frames"));
 
         // An idle link must not divide by zero.
-        assert_eq!(LinkErrors::default().error_pct(), 0.0);
+        assert_eq!(LinkErrors::default().error_pct(), None);
     }
 
     /// Spiky latency must not blank the trace: a single 240ms outlier among

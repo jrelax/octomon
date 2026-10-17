@@ -2,8 +2,8 @@
 //!
 //! Beyond CPU and memory this collects the signals that explain a slow network
 //! when the obvious ones look fine: a single saturated core, memory pressure,
-//! load average, and (on macOS) thermal throttling — which tanks throughput
-//! while CPU sits idle.
+//! load average, and (on macOS and Windows) whether the OS is holding the
+//! CPU back — which can cap a speed test or an encrypted tunnel.
 
 use std::sync::{Arc, Mutex};
 
