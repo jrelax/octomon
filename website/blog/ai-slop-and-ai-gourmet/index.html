@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>octomon: AI slop is real. So is AI gourmet.</title>
+<meta name="description" content="Some people have called octomon &quot;AI slop&quot;. Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.">
+<meta name="author" content="Simon Thorpe">
+<link rel="canonical" href="https://octomon.dev/blog/ai-slop-and-ai-gourmet/">
+<link rel="alternate" type="application/rss+xml" title="octomon blog" href="/blog/feed.xml">
+<link rel="alternate" type="application/rss+xml" title="octomon releases" href="/changelog.xml">
+<link rel="icon" type="image/png" sizes="32x32" href="/images/octomon-logo-32.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/images/octomon-icon-tile.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/images/octomon-icon-tile.png">
+<meta property="og:site_name" content="octomon">
+<meta property="og:locale" content="en_GB">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://octomon.dev/blog/ai-slop-and-ai-gourmet/">
+<meta property="og:title" content="AI slop is real. So is AI gourmet.">
+<meta property="og:description" content="Some people have called octomon &quot;AI slop&quot;. Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.">
+<meta property="og:image" content="https://octomon.dev/blog/ai-slop-and-ai-gourmet/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AI slop is real. So is AI gourmet.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI slop is real. So is AI gourmet.">
+<meta name="twitter:description" content="Some people have called octomon &quot;AI slop&quot;. Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.">
+<meta name="twitter:image" content="https://octomon.dev/blog/ai-slop-and-ai-gourmet/card.png">
+<meta property="article:published_time" content="2026-10-17">
+<meta property="article:author" content="Simon Thorpe">
+<link rel="stylesheet" href="/tokens.css">
+<style>
+  /* Every colour on this page is a token from tokens.css, no hex here. */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+  body {
+    margin: 0;
+    background: var(--octo-ink);
+    color: var(--octo-white);
+    font-family: var(--octo-body);
+    font-size: 17px;
+    line-height: 1.6;
+    /* wide content must scroll inside its own container, never the page */
+    overflow-x: clip;
+  }
+  a { color: var(--octo-green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible {
+    outline: 2px solid var(--octo-green);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  h1, h2 {
+    font-family: var(--octo-display);
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    font-weight: 400;
+    line-height: 1.05;
+    margin: 0 0 0.4em;
+  }
+  kbd {
+    font-family: var(--octo-mono);
+    font-size: 0.85em;
+    background: var(--octo-deep);
+    border: 1px solid var(--octo-line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 0.1em 0.45em;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* the nav stays put while the page scrolls under it. sticky, not fixed,
+     so it keeps its place in the flow and nothing needs a top padding to
+     dodge it; scroll-padding-top on html keeps in-page anchors clear of it */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    border-bottom: 1px solid var(--octo-line);
+    background: var(--octo-ink);
+  }
+  .nav {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    padding: 14px 0;
+  }
+  .mark { display: flex; align-items: center; gap: 12px; color: var(--octo-white); }
+  .mark:hover { text-decoration: none; }
+  .mark svg { width: 34px; height: 34px; display: block; }
+  .wordmark {
+    font-family: var(--octo-mono);
+    font-weight: 800;
+    font-size: 1.35rem;
+    letter-spacing: 0.023em;
+  }
+  nav.links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: var(--octo-mono); font-size: 0.95rem; }
+  /* mobile hamburger: pure CSS (checkbox), desktop never sees it */
+  .menu-btn { display: none; }
+
+  section { padding: 64px 0; }
+  section + section { border-top: 1px solid var(--octo-line); }
+  /* the body follows the page head directly, so it needs far less air above
+     it than a section that follows another section does */
+  main > section { padding-top: 36px; }
+  h1 { font-size: clamp(2rem, 4.5vw, 3.4rem); }
+  h2 { font-size: clamp(1.6rem, 3vw, 2.4rem); }
+  .lede { color: var(--octo-muted); max-width: 56em; margin-top: 0; }
+
+  /* the page head: no hero art, just the title over a magenta rule */
+  .pagehead { padding: 44px 0 26px; border-bottom: 2px solid var(--octo-magenta); }
+  /* the head's lede runs the full wrap: a one-line description should stay
+     on one line rather than wrap early into a narrow column */
+  .pagehead .lede { max-width: none; }
+  /* byline under a post title: date and reading time, never a name */
+  .postmeta {
+    font-family: var(--octo-mono);
+    font-size: 0.85rem;
+    color: var(--octo-muted);
+    margin: 0 0 0.9em;
+  }
+
+  /* the index: one card per post, newest first, same card as /privacy */
+  .postlist { margin-top: 0; }
+  .postlist .card:first-child { margin-top: 0; }
+  .card {
+    background: var(--octo-deep);
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-card);
+    padding: 22px 24px;
+    margin-top: 24px;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-family: var(--octo-mono); font-weight: 700; font-size: 1.15rem;
+    text-transform: none; letter-spacing: 0; line-height: 1.35;
+  }
+  .card h2 a { color: var(--octo-green); }
+  .card p { margin: 0 0 0.7em; color: var(--octo-muted); }
+  .card p:last-child { margin-bottom: 0; }
+  .card .more { font-family: var(--octo-mono); font-size: 0.85rem; }
+
+  /* the post body: one column at a readable measure, not the full 1120 */
+  /* 44em at 17px is about 750px: a long-form measure with room for the
+     figures and the inline monospace, without lines turning into rows. */
+  .post { max-width: 44em; }
+  /* Body copy comes off pure white: #F4F7FA on the ink ground is the highest
+     contrast on the site, and at paragraph length that makes thin text glow.
+     A soft off-white keeps the dark theme and reads for longer; the extra
+     leading does the rest. Headings stay white. */
+  .post p, .post li {
+    color: color-mix(in srgb, var(--octo-white) 84%, var(--octo-ink));
+    font-size: 1.05rem;
+    line-height: 1.75;
+  }
+  .post > p:first-child { margin-top: 0; }
+  .post h2 {
+    /* smaller than a section head: a subhead should not shout */
+    font-size: clamp(1.3rem, 2.2vw, 1.7rem);
+    margin: 1.9em 0 0.5em;
+  }
+  .post h3 {
+    margin: 1.6em 0 0.4em;
+    font-family: var(--octo-mono); font-weight: 700; font-size: 1.05rem;
+    color: var(--octo-green);
+  }
+  /* the "#" after every heading: invisible until the heading is hovered or
+     the link is focused, so a reader who wants a deep link can find one and
+     nobody else sees it */
+  .post h2 .anchor, .post h3 .anchor, .post h4 .anchor {
+    margin-left: 0.35em; font-weight: 400; font-family: var(--octo-mono);
+    color: var(--octo-muted); text-decoration: none; opacity: 0;
+  }
+  .post h2:hover .anchor, .post h3:hover .anchor, .post h4:hover .anchor,
+  .post .anchor:focus-visible { opacity: 1; }
+  .post ul, .post ol { padding-left: 1.3em; margin: 1em 0; }
+  .post li { margin: 0.5em 0; }
+  .post li::marker { color: var(--octo-magenta); }
+  .post code {
+    font-family: var(--octo-mono); font-size: 0.9em;
+    color: var(--octo-green);
+    background: var(--octo-deep);
+    border: 1px solid var(--octo-line);
+    border-radius: 5px;
+    padding: 0.08em 0.35em;
+    /* a run that wraps gets its padding and border on both halves */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .post pre {
+    background: var(--octo-deep);
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-chip);
+    padding: 16px 18px;
+    /* the block scrolls, the page never does */
+    overflow-x: auto;
+  }
+  .post pre code {
+    background: none; border: 0; padding: 0;
+    color: var(--octo-white); font-size: 0.88rem; line-height: 1.5;
+  }
+  .post blockquote {
+    margin: 1.4em 0;
+    padding: 2px 0 2px 18px;
+    border-left: 3px solid var(--octo-magenta);
+    color: var(--octo-muted);
+  }
+  .post blockquote p:last-child { margin-bottom: 0; }
+  .post img {
+    max-width: 100%; height: auto; display: block;
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-card);
+    cursor: zoom-in;
+  }
+
+  /* lightbox: any click (or Esc) closes. Same as the homepage's. */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    padding: 3vmin;
+    background: color-mix(in srgb, var(--octo-deep) 94%, transparent);
+    cursor: zoom-out;
+  }
+  .lightbox[hidden] { display: none; }
+  .lightbox img {
+    max-width: 100%; max-height: 100%; width: auto; height: auto;
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-card);
+  }
+  .post figure { margin: 1.8em 0; }
+  /* video embed in a post: 16:9, framed like the figures */
+  .post .video-frame {
+    display: block; aspect-ratio: 16 / 9; width: 100%;
+    margin: 1.8em 0;
+    border: 1px solid var(--octo-line);
+    border-radius: var(--octo-radius-card);
+    background: var(--octo-deep);
+  }
+  .post figcaption {
+    font-family: var(--octo-mono); font-size: 0.82rem;
+    color: var(--octo-muted); margin-top: 10px;
+  }
+  .post hr { border: 0; border-top: 1px solid var(--octo-line); margin: 2.4em 0; }
+  .post strong { color: var(--octo-white); }
+  .post table { width: 100%; border-collapse: collapse; margin: 1.4em 0; font-size: 0.94rem; }
+  .post th, .post td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--octo-line); }
+  .post th { font-family: var(--octo-mono); font-weight: 700; color: var(--octo-green); }
+
+  .backlink { font-family: var(--octo-mono); font-size: 0.9rem; margin-top: 48px; }
+
+  footer {
+    border-top: 2px solid var(--octo-magenta); /* decorative rule */
+    padding: 28px 0 40px;
+    color: var(--octo-muted);
+    font-size: 0.9rem;
+  }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+
+  /* phones */
+  @media (max-width: 600px) {
+    .wrap { padding: 0 16px; }
+    /* hamburger: the mark keeps the left edge; links drop into a column
+       only when the burger is checked */
+    .menu-btn {
+      display: block; margin-left: auto; cursor: pointer;
+      font-size: 1.5rem; line-height: 1; color: var(--octo-white);
+      padding: 4px 8px; border: 1px solid var(--octo-line);
+      border-radius: var(--octo-radius-chip);
+    }
+    nav.links { display: none; }
+    /* the closed nav is one row: the mark left, the burger right, both
+       centred in a band with equal air above and below. The open menu gets
+       its bottom air from the checked links rule below instead. */
+    .nav { padding: 12px 0; }
+    /* the open menu lines up with the mark above it, which the tablet rule
+       has already nudged 12px in from the wrap's edge; without this the links
+       sit further left than the logo they hang under */
+    .menu-toggle:checked ~ nav.links {
+      display: flex; flex-basis: 100%; flex-direction: column;
+      gap: 12px; padding: 8px 2px 12px 12px; font-size: 1rem;
+    }
+    section { padding: 44px 0; }
+    .pagehead { padding: 32px 0 22px; }
+    main > section { padding-top: 28px; }
+    .card { padding: 16px; }
+    .post pre { padding: 12px 14px; }
+    footer .wrap { flex-direction: column; align-items: flex-start; gap: 6px; }
+  }
+  @media (max-width: 480px) {
+    .wordmark { font-size: 1.15rem; }
+  }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "@id": "https://octomon.dev/blog/ai-slop-and-ai-gourmet/",
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://octomon.dev/blog/ai-slop-and-ai-gourmet/"
+  },
+  "url": "https://octomon.dev/blog/ai-slop-and-ai-gourmet/",
+  "headline": "AI slop is real. So is AI gourmet.",
+  "description": "Some people have called octomon \"AI slop\". Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.",
+  "datePublished": "2026-10-17",
+  "dateModified": "2026-10-17",
+  "author": {
+    "@type": "Person",
+    "name": "Simon Thorpe",
+    "url": "https://github.com/securitypedant"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "octomon",
+    "url": "https://octomon.dev/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://octomon.dev/images/octomon-icon-tile.png"
+    }
+  },
+  "image": "https://octomon.dev/blog/ai-slop-and-ai-gourmet/card.png",
+  "wordCount": 2245,
+  "inLanguage": "en-GB",
+  "isPartOf": {
+    "@type": "Blog",
+    "@id": "https://octomon.dev/blog/",
+    "name": "octomon blog"
+  }
+}
+</script>
+<!-- Cloudflare Web Analytics -->
+<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "0ebdfd53d18b49d39f76f9d08b3499c9"}'></script>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="mark" href="/" aria-label="octomon home">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-hidden="true">
+        <g fill="var(--octo-green)">
+          <g transform="rotate(-14 22 64)"><rect x="18" y="60" width="8" height="44" rx="4"/></g>
+          <g transform="rotate(-7 34 64)"><rect x="30" y="60" width="8" height="58" rx="4"/></g>
+          <rect x="42" y="60" width="8" height="40" rx="4"/>
+          <rect x="54" y="60" width="8" height="54" rx="4"/>
+          <rect x="66" y="60" width="8" height="42" rx="4"/>
+          <rect x="78" y="60" width="8" height="58" rx="4" fill="var(--octo-amber)"/>
+          <g transform="rotate(7 94 64)"><rect x="90" y="60" width="8" height="46" rx="4"/></g>
+          <g transform="rotate(14 106 64)"><rect x="102" y="60" width="8" height="60" rx="4"/></g>
+        </g>
+        <path d="M22 70 C22 42 38 18 64 18 C90 18 106 42 106 70 Z" fill="var(--octo-green)"/>
+        <rect x="44" y="38" width="11" height="18" rx="1.5" fill="var(--octo-red)"/>
+        <rect x="73" y="38" width="11" height="18" rx="1.5" fill="var(--octo-red)"/>
+      </svg>
+      <span class="wordmark">octomon</span>
+    </a>
+    <input type="checkbox" id="menu" class="menu-toggle" hidden>
+    <label for="menu" class="menu-btn" aria-label="menu">&#9776;</label>
+    <nav class="links" aria-label="site">
+      <a href="/#install">install</a>
+      <a href="/howto">how to</a>
+      <a href="/#features">features</a>
+      <a href="/#video">video</a>
+      <a href="/blog/">blog</a>
+      <a href="/changelog">changelog</a>
+      <a href="/understand">faq</a>
+      <a href="/understand#glossary">glossary</a>
+      <a href="/privacy">privacy</a>
+      <a href="https://github.com/securitypedant/octomon">github</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="pagehead">
+    <div class="wrap">
+      <h1>AI slop is real. So is AI gourmet.</h1>
+      <p class="postmeta"><time datetime="2026-10-17">17 October 2026</time> · 10 min read</p>
+      <p class="lede">Some people have called octomon &quot;AI slop&quot;. Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.</p>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <article class="post">
+        <p>Since I started posting about octomon, one comment keeps turning up. 
+        It arrives in a few different flavours, but it always says the same thing:</p>
+        <blockquote>
+        <p>AI slop.</p>
+        </blockquote>
+        <p>Sometimes it comes with a reason. Mostly it doesn&#39;t. Sometimes the comment has come from someone who&#39;s actually tried the tool, but mostly I don&#39;t think they have. So let me address it
+        head on, because I think the people saying it are half right, and the half they have wrong is worth a proper argument.</p>
+        <h2 id="the-food-processor">The food processor <a class="anchor" href="#the-food-processor" aria-label="Link to this section">#</a></h2>
+        <p>Let&#39;s get the easy part out of the way. If your objection is simply that AI was involved in writing the code, you are the cook who refuses to own a food processor because real chefs chop by hand. Today every professional kitchen has one (and a sous vide or two), and nobody can taste the difference in the soup. <strong>Every</strong> company that ships software today is using AI to write some of it. Show me one that isn&#39;t.</p>
+        <p>I&#39;ll wait.</p>
+        <p>This isn&#39;t a prediction, it&#39;s the reality of development right now. The question of whether software should be written with AI <a href="https://www.theregister.com/ai-and-ml/2026/10/14/linux-kernel-devs-drop-obligatory-confession-of-ai-tool-usage/5303140">was settled</a> while people were
+        still arguing about it. What is left to argue about is whether a given piece
+        of software is any good, and that question has never cared about the tools used to write it. Someone at work mentioned a quote, I can&#39;t remember who it&#39;s from, but it&#39;s accurate.</p>
+        <blockquote>
+        <p>The difference between AI slop and something better, is you.</p>
+        </blockquote>
+        <p>Another quote that I have LIVED by my entire career... quotable to no-one but the industry itself.</p>
+        <blockquote>
+        <p>Shit in, shit out</p>
+        </blockquote>
+        <p>Finally, while I&#39;m pulling out my favourite quotes, here&#39;s another one that has lived with me since working for my first startup in the 90s.</p>
+        <blockquote>
+        <p>Keep It Simple Stupid (K.I.S.S.)</p>
+        </blockquote>
+        <p>Which actually applies a LOT to some of the AI coding i&#39;ve done, because AI often can make a simple task overly complex and that&#39;s where the human has to rein it in.</p>
+        <p>So when &quot;AI slop&quot; means &quot;AI touched it&quot;, I&#39;m not interested. When it means something more specific, I am very interested, because slop is real and there is a lot of it.</p>
+        <h2 id="what-i-think-slop-actually-is">What I think slop actually is <a class="anchor" href="#what-i-think-slop-actually-is" aria-label="Link to this section">#</a></h2>
+        <p>Here is what I think people mean when the word is used with accuracy. Someone with a
+        shallow understanding of software asks AI for a thing, gets a thing, and
+        ships the thing. The first version is typically the only version. </p>
+        <ul>
+        <li>Nobody asked what happens when the input is hostile. </li>
+        <li>Nobody asked what the program writes to disk, who can read it, or what it sends over the network. </li>
+        <li>Nobody asked what
+        happens on the second machine, or the hundredth hour of uptime, or when the user does the thing nobody expected. </li>
+        <li>Nobody designed the interface, it just fell out of whatever the model produced first. </li>
+        <li>And nobody who was an expert ever looked at it and said &quot;no, that&#39;s wrong&quot;.</li>
+        </ul>
+        <p>Security, privacy, reliability, change control, user experience. The AI
+        didn&#39;t skip those, the person didn&#39;t think about them.</p>
+        <p>As the quote above states, and more than one mentor has told me over the years: shit in, shit out. A
+        model given a vague prompt by someone who can&#39;t tell a good answer from a
+        plausible one will produce a plausible one. That is slop. On that, the commenters and I agree.</p>
+        <p>But let&#39;s be honest about something else. By that definition, slop is not
+        new, and it is definitely not an AI invention. A great deal of the software published
+        over the last 30 years was slop. I have used it, I have debugged it, and I have written some of it! Code copied from a forum
+        post without understanding it, then a tutorial, then Stack Overflow, with
+        the variable names changed and the error handling left as an exercise.
+        No threat model, no thought about what it wrote to disk, a UI that was
+        whatever the framework&#39;s default looked like, version 1.0 and never a
+        1.1. The tooling got better and the documentation got better, and the
+        slop got a bit better with it, but it never went away. If anything, a
+        modern model given a lazy prompt often produces something tidier than
+        what a lot of people were shipping in 2005.</p>
+        <p>So the honest version of the complaint is not that AI produces slop.
+        People have always produced slop and while a lot of it never gained much traction, unfortunately, I am old enough to remember using Internet Explorer 6, Adobe Flash and Lotus Notes. But I digress.</p>
+        <p>The issue now is that AI produces slop at a volume
+        we have never seen before, because the cost of making it has dropped to
+        nearly nothing. That is a real problem, and the Internet is now full of
+        it. It is also a very different complaint from &quot;this particular tool is
+        slop&quot;, and the two keep getting confused.</p>
+        <h2 id="the-other-thing-needs-a-name">The other thing needs a name <a class="anchor" href="#the-other-thing-needs-a-name" aria-label="Link to this section">#</a></h2>
+        <p>But the same tools, in different hands, produce something else entirely. AI
+        is a fantastic way to write very good code, fast. The catch is that
+        everything upstream of the code has to be good first: the idea, the design,
+        the architecture, and yes, the prompts. Give it a clear specification from
+        someone who knows the field and it is like having a tireless pair
+        programmer who has read every RFC and never gets bored of the fiddly bits.</p>
+        <p>We have a word for the bad end of that spectrum and none for the good end,
+        which is how &quot;AI slop&quot; ends up thrown at everything. So I&#39;d like to coin
+        one. If AI slop is the unappetising, watery, badly prepared meal that looks
+        and tastes like animal feed, then <strong>AI gourmet</strong> is the Michelin star
+        dish: high quality, a complex flavour profile, specialist preparation,
+        sometimes a rare ingredient or two.</p>
+        <p>Same kitchen. Same knives. Completely different chef.</p>
+        <h2 id="what-makes-it-gourmet">What makes it gourmet <a class="anchor" href="#what-makes-it-gourmet" aria-label="Link to this section">#</a></h2>
+        <p>So what are the qualities? Having spent the last two and a half months building octomon this way, I think it comes down to four things.</p>
+        <figure>
+          <img src="chefs-kiss.gif" alt="A cartoon chef in a tall white hat closes his eyes, kisses his bunched fingertips and flicks them open">
+          <figcaption>Chef's kiss. Source: <a href="https://tenor.com/view/chefs-kiss-french-chef-perfect-dish-excellent-food-perfection-gif-20341505">Tenor</a></figcaption>
+        </figure>
+
+        <h3 id="iteration-and-a-lot-more-of-it">Iteration, and a lot more of it <a class="anchor" href="#iteration-and-a-lot-more-of-it" aria-label="Link to this section">#</a></h3>
+        <p>AI lets you prototype, test and throw away in minutes instead of days. The
+        slop mistake is to treat that as a reason to iterate less: the first
+        version arrived so quickly, why not ship it? The gourmet move is the
+        opposite. Faster iteration means you can afford far more of it.</p>
+        <p>octomon has had 45 releases since the first changelog entry on 11 August.
+        That is not because I&#39;m bad at planning. It&#39;s because every release went
+        onto real networks (home fibre, plane Wi-Fi, an Azure VM, a Windows
+        laptop behind NordVPN and WARP) and every one of those networks taught me
+        something the last version got wrong. The <a href="/changelog">changelog</a> is the
+        record. Read a few entries and you&#39;ll see the same features being reworked
+        three and four times as the edge cases turned up.</p>
+        <h3 id="an-experienced-human-in-the-review-loop">An experienced human in the review loop <a class="anchor" href="#an-experienced-human-in-the-review-loop" aria-label="Link to this section">#</a></h3>
+        <p>I love that AI can bring software development to people who could never
+        have written a line of Rust before. I genuinely do. But I also believe that
+        right now, to produce production quality software, you need a human in the
+        review process who understands the domain, and that this is the single
+        biggest thing separating gourmet from slop.</p>
+        <p>While building octomon there were plenty of moments where the AI made an
+        assumption that looked perfectly reasonable and was wrong, and it was 25
+        years of networking and development experience that let me catch it. Three
+        that come to mind:</p>
+        <ul>
+        <li><strong>Targets you add were voting on whether the Internet was up.</strong> The
+        first implementation treated every monitored host equally. Then my son&#39;s
+        three Fortnite servers, which never answer ICMP, outvoted the built-in
+        targets into &quot;Internet unreachable&quot; while the game played fine. Only
+        the built-in targets should ever decide that. Obvious once you&#39;ve seen
+        it, not obvious from the code.</li>
+        <li><strong>A gateway that drops pings is not an outage.</strong> Airport, hotel and
+        office routers rate-limit or refuse ICMP all the time, and the hops past
+        them are perfectly clean. An early version flagged this as a problem.
+        A network admin knows it&#39;s a policy.</li>
+        <li><strong>Switching a VPN on looked like 30% packet loss.</strong> During the initial design and build, I never gave VPNs a thought and then while testing I switched mine on. The probe windows
+        reset during the switchover and the first few seconds of loss were
+        a combination of octomon finding its feet and the VPN handover finalizing, but I hadn&#39;t designed for this and instead octomon was reporting the connection failing. That needed a
+        settling grace, and it needed someone who knew what a VPN handover
+        actually does on the wire to recognise the pattern.</li>
+        </ul>
+        <p>None of those are things the model got &quot;wrong&quot; in the sense of a bug. It
+        did exactly what was asked (or rather wasn&#39;t asked). They are things that only a person who has sat
+        in those networks would know to ask for. That is the review loop, and it
+        isn&#39;t optional.</p>
+        <h3 id="you-have-to-actually-understand-the-code">You have to actually understand the code <a class="anchor" href="#you-have-to-actually-understand-the-code" aria-label="Link to this section">#</a></h3>
+        <p>Closely related, and I think just as important: you have to be able to
+        read what comes back. Not every line, not every time, but well enough to
+        know when something is wrong, and well enough to write some of it
+        yourself.</p>
+        <p>In my case I am well versed in Java, Python and the web languages (HTML,
+        CSS, JavaScript), with some C in the distant past. I used octomon as my
+        excuse to learn Rust. So the language was new to me, but none of the
+        concepts were. A loop is a loop, a struct is a struct, and a function that
+        returns an error you then ignore is a bug in any language. The borrow
+        checker was new. The idea that you should think about who owns a piece of
+        memory was not.</p>
+        <p>That is a very different position from not understanding the code at all.
+        When the model produced something that compiled and looked plausible, I
+        could tell whether it was also right, and when it wasn&#39;t I could say why. I&#39;m not convinced you can produce AI gourmet without that.
+        You can produce something that works, for a while, on your machine. But
+        you can&#39;t review what you can&#39;t read, and we&#39;ve just established that
+        the review is where the quality comes from.</p>
+        <p>It&#39;s also been genuinely fun. A lot of octomon I wrote myself, by hand, as a way of learning the language properly. In fact, I let AI mostly
+        handle the UX as it was easy to verify the output (I just look at it) and I wanted to focus on the core monitoring code. But because I didn&#39;t know Rust, I would ask it to draft a function and teach me parts of Rust that I might not have known in that context. It really was pair programming at its best and I enjoyed that as much as
+        any of it. AI didn&#39;t replace the craft. It gave me a tireless tutor
+        while I picked up a new one. Have I mastered Rust? Not really, but I know enough to contribute my own code and review what it&#39;s writing.</p>
+        <h3 id="an-idea-that-fills-a-real-gap">An idea that fills a real gap <a class="anchor" href="#an-idea-that-fills-a-real-gap" aria-label="Link to this section">#</a></h3>
+        <p>The last ingredient is the one no amount of prompting can supply. The idea
+        has to be good. octomon exists because when my Internet connection wobbles
+        I end up with four terminals open, ping and traceroute and dig and btop,
+        and nine numbers that between them never answer the question I actually
+        have. You can find eight or ten tools that each do a piece of this. I
+        could not find one that put the whole connection on one screen and told me
+        what was going on. I had spent years looking for a good tool and never found what I wanted. So I built one. If the thing you&#39;re building already
+        exists in five better forms, speed of production doesn&#39;t help you; you&#39;ve
+        just made duplicative slop.</p>
+        <h2 id="judge-the-dish">Judge the dish <a class="anchor" href="#judge-the-dish" aria-label="Link to this section">#</a></h2>
+        <p>I&#39;ll end where the food processor started. In a few years, &quot;written with
+        AI&quot; will be about as remarkable a disclosure as &quot;chopped in a food
+        processor&quot;, and the cooks who swore by the knife will have quietly bought
+        one. What will still matter is whether the dish is any good.</p>
+        <p>So judge the dish, not the kitchen. octomon is open source, <a href="/blog/technical-paper/">the
+        algorithms and thresholds are written up</a> in
+        tedious detail, <a href="/privacy">everything it stores is listed</a>, and it runs
+        unprivileged so you can try it without trusting it. If you taste it and
+        it&#39;s slop, tell me precisely what&#39;s off. That&#39;s a bug report, and I&#39;ll
+        iterate on it. Which, if you&#39;ve been paying attention, is rather the
+        point.</p>
+        <p>Do I think octomon is AI gourmet? Nope. But it&#39;s on the stove, bubbling away and it&#39;s smelling pretty darn good. Maybe a little more salt?</p>
+        <hr>
+        <p>Oh and full disclosure, AI drafted this blog article and then I hacked away at it for a few weeks before publishing.</p>
+        <p>If you find octomon useful, a
+        <a href="https://github.com/securitypedant/octomon">GitHub star</a> is much appreciated.</p>
+      </article>
+      <p class="backlink"><a href="/blog/">← all posts</a></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2025–2026 Simon Thorpe · MIT or Apache-2.0</span>
+    <a href="/blog/">blog</a>
+    <a href="/changelog">changelog</a>
+    <a href="/privacy">privacy</a>
+    <a href="https://github.com/securitypedant/octomon">github.com/securitypedant/octomon</a>
+    <a href="https://crates.io/crates/octomon">crates.io/crates/octomon</a>
+    <a href="https://www.youtube.com/watch?v=sHPd2LeYvaw">intro video</a>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="image, full size, click anywhere to close" hidden>
+  <img alt="">
+</div>
+
+<script>
+  // Lightbox: any image in the post opens full-screen; any click (or Esc)
+  // closes. currentSrc reuses whichever rendition the browser already fetched.
+  const lb = document.getElementById("lightbox");
+  const lbImg = lb.querySelector("img");
+  const openLb = (img) => {
+    lbImg.src = img.currentSrc || img.src;
+    lbImg.alt = img.alt;
+    lb.hidden = false;
+    document.body.style.overflow = "hidden";
+  };
+  const closeLb = () => {
+    lb.hidden = true;
+    lbImg.removeAttribute("src");
+    document.body.style.overflow = "";
+  };
+  for (const img of document.querySelectorAll(".post img")) {
+    img.tabIndex = 0;
+    img.setAttribute("role", "button");
+    img.addEventListener("click", () => openLb(img));
+    img.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openLb(img); }
+    });
+  }
+  lb.addEventListener("click", closeLb);
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !lb.hidden) closeLb();
+  });
+</script>
+
+</body>
+</html>

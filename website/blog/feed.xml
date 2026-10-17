@@ -7,6 +7,13 @@
   <description>Notes on building octomon.</description>
   <language>en</language>
   <item>
+    <title>AI slop is real. So is AI gourmet.</title>
+    <link>https://octomon.dev/blog/ai-slop-and-ai-gourmet/</link>
+    <guid isPermaLink="true">https://octomon.dev/blog/ai-slop-and-ai-gourmet/</guid>
+    <pubDate>Sat, 17 Oct 2026 00:00:00 GMT</pubDate>
+    <description>Some people have called octomon &quot;AI slop&quot;. Yes, AI has helped me build it. No, that is not what slop means. Here is what it does mean, and the name I'd like for the other thing.</description>
+  </item>
+  <item>
     <title>octomon technical paper</title>
     <link>https://octomon.dev/blog/technical-paper/</link>
     <guid isPermaLink="true">https://octomon.dev/blog/technical-paper/</guid>

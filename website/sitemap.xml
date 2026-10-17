@@ -25,7 +25,11 @@
   <!-- blog:start -->
   <url>
     <loc>https://octomon.dev/blog/</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-17</lastmod>
+  </url>
+  <url>
+    <loc>https://octomon.dev/blog/ai-slop-and-ai-gourmet/</loc>
+    <lastmod>2026-10-17</lastmod>
   </url>
   <url>
     <loc>https://octomon.dev/blog/technical-paper/</loc>
