@@ -76,7 +76,7 @@ to measure the quality of the connection. One row each, with the latest round tr
   continuously from then on, not only when someone runs a traceroute, which
   is what lets the analysis say "ISP" rather than "somewhere out there".
 - **IPv6 twins.** When the link has a global IPv6 address, each built-in target, the gateway and each hop gets a second row marked "v6", probed over IPv6. The two families are judged apart.
-- **Your public IP**, discovered at startup.
+- **Your public IP**, discovered at startup, on a network change, and again whenever a monitored path changes.
 - **Anything you add** by address or name: a game server, a company network device.
   These are judged one at a time and never vote on the Internet as a whole.
 
@@ -172,7 +172,12 @@ twenty probes in the same instant. Each hop keeps the same statistics as a
 target row, computed by the same code, so the columns mean the same thing
 in both tables. The path is walked again every 60 seconds to pick up route
 changes, and a hop whose address has not changed keeps its history across
-the re-walk.
+the re-walk. When the re-walk finds the route changed, the events timeline
+says what moved: which hop now answers from a different router, which hop
+joined, and where the destination sits. A hop that merely stops answering
+traceroute for one walk is not counted as a change, because routers
+rate-limit their replies. The public IP is fetched again at that moment,
+since a new path often means a new egress.
 
 <figure>
   <img src="monitorspark.png" alt="One row of the path monitor: a hop at 172.68.188.120 with last 57.2ms, avg 30.9ms, p95 88.3ms, max 132.4ms, jitter 37.2 and loss 3%, and to its right a sparkline of mostly short green bars with a few taller yellow ones and a single full-height red bar near the end">
@@ -240,6 +245,15 @@ per-interval rates and accumulates them two ways: onto the owning process,
 and onto the remote address. The tables show session totals with the
 current rate beside them, so a process that moved a gigabyte ten minutes
 ago still ranks above one trickling now.
+
+Each published row also keeps five minutes of its own rate, one sample per
+two-second tick. Under the `/` filter the two graphs become stacked: the
+filtered rows' summed rate drawn bright from the baseline, the rest of the
+interface total dim above it. The two series come from different clocks and
+different counters, so each talkers sample is placed on the graph by the
+time it covered rather than by position, and a filtered sum can exceed the
+interface total in a column, because loopback bytes count against a process
+but never cross the wire.
 
 Code: [`procbw.rs`](https://github.com/securitypedant/octomon/blob/main/src/collectors/procbw.rs), [`mod.rs`](https://github.com/securitypedant/octomon/blob/main/src/platform/mod.rs), [`etw.rs`](https://github.com/securitypedant/octomon/blob/main/src/platform/etw.rs).
 
@@ -832,7 +846,10 @@ Below the ladder is a list of overall checks and general status indicators that 
   carry the number only; if the v6 answer names the same AS, that name is
   used. If the address the edge saw is
   not the public IP octomon fetched, the row says so and goes amber which indicates 
-  the two requests left by different paths.
+  the two requests left by different paths. The same answer carries the
+  latest released version. At startup a newer one is shown in a notice that
+  any key dismisses; found later, it only goes on the timeline. octomon never
+  updates itself.
 - **public IP**: The public v4 and v6 addresses octomon fetched.
 - **nat**: How many layers of NAT sit between this machine and the
   Internet. If the gateway has a private address and hop 2 is also
@@ -1116,4 +1133,5 @@ but it's a damn sight better than the hacky mess of scripts I used to run.
 This is a living document. Every change to it after first publication gets
 a line here, newest first, so you can see what moved and when.
 
+- **2026-10-18** · Reviewed against octomon 0.11.6: path-change events and public IP re-fetch (§2.1), the stacked filtered bandwidth graph (§2.2), the version notice (§4.9).
 - **2026-10-16** · First publication, written against octomon 0.11.4.

@@ -144,6 +144,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config) {
         s.throughput.up_bps = up_bps;
         s.throughput.down_hist.push(down_bps);
         s.throughput.up_hist.push(up_bps);
+        s.throughput.sampled_at = Some(std::time::Instant::now());
 
         let e = &mut s.link_errors;
         e.iface = label;

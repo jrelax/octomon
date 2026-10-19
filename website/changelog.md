@@ -7,6 +7,16 @@ Every release since the first one, newest first. Each version is also a
 [GitHub release](https://github.com/securitypedant/octomon/releases) with
 binaries for macOS, Linux and Windows.
 
+## 0.11.6 · 2026-10-18
+
+Some minor quality of life improvements. Bandwidth graph now reflects what's being filtered, event entry when the monitored path changes, and a word at startup when a newer octomon is out.
+
+- The Bandwidth graphs follow the `/` filter. When filtering processes
+or remote targets, their respective bandwidth is now highlighted
+on the bandwidth graph with the current total still displayed, but dimmed.
+- When the path monitor's minute-by-minute re-walk finds the route changed, it now records an event which shows on the timeline (e).
+- When a newer octomon is out, the startup version check now says so in a notice over the dashboard.
+
 ## 0.11.5 · 2026-10-16
 
 While writing the [technical paper](/blog/technical-paper/), I re-evaluated some decisions and found some bugs.

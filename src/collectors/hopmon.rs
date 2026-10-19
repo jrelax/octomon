@@ -57,10 +57,19 @@ pub fn start(
     };
 
     tokio::spawn(async move {
+        // The path as the previous walk left it; `None` on the first walk,
+        // which has nothing to be compared with.
+        let mut before: Option<PathShape> = None;
         loop {
             discover(&state, &clients, &cfg, dest, generation).await;
             if superseded(&state, generation) {
                 return;
+            }
+            if let Some(before) = before.take()
+                && let Some(after) = shape(&state, generation)
+                && let Some(change) = describe_path_change(&before, &after, dest)
+            {
+                report_path_change(&state, &cfg, generation, change).await;
             }
             tokio::time::sleep(REDISCOVER).await;
             if superseded(&state, generation) {
@@ -74,9 +83,169 @@ pub fn start(
                 .filter(|m| m.generation == generation)
             {
                 m.discovering = true;
+                before = Some(shape_of(m));
             }
         }
     });
+}
+
+/// The path reduced to what a route change is made of: each TTL and who
+/// answered there. Statistics are left out on purpose; they are what a
+/// change resets, not what defines one.
+type PathShape = Vec<(u8, Option<IpAddr>)>;
+
+fn shape_of(m: &HopMonitor) -> PathShape {
+    m.hops.iter().map(|h| (h.ttl, h.addr)).collect()
+}
+
+fn shape(state: &Arc<Mutex<AppState>>, generation: u64) -> Option<PathShape> {
+    state
+        .lock()
+        .unwrap()
+        .hop_monitor
+        .as_ref()
+        .filter(|m| m.generation == generation)
+        .map(shape_of)
+}
+
+/// The TTL at which the destination itself answered, if the walk got there.
+/// The unreached placeholder row does not count.
+fn dest_ttl(shape: &[(u8, Option<IpAddr>)], dest: IpAddr) -> Option<u8> {
+    shape
+        .iter()
+        .find(|(ttl, addr)| *ttl != MonitoredHop::DEST_TTL && *addr == Some(dest))
+        .map(|(ttl, _)| *ttl)
+}
+
+/// What changed between two walks, in the words the events timeline uses, or
+/// `None` when the route itself did not change.
+///
+/// A route change is a hop answering from a different address, a hop joining
+/// the path, or the destination moving to another TTL. A hop that merely stops
+/// answering traceroute (or starts again) is not one: routers rate-limit their
+/// replies, and a flapping hop would otherwise write an event a minute. Such
+/// hops are mentioned only alongside a real change, since their statistics
+/// start over too. Long lists are cut to the first three.
+fn describe_path_change(
+    before: &[(u8, Option<IpAddr>)],
+    after: &[(u8, Option<IpAddr>)],
+    dest: IpAddr,
+) -> Option<String> {
+    let at =
+        |shape: &[(u8, Option<IpAddr>)], ttl: u8| shape.iter().find(|h| h.0 == ttl).map(|h| h.1);
+    let mut hops: Vec<String> = Vec::new();
+    let mut routed = false;
+    for &(ttl, now) in after {
+        if ttl == MonitoredHop::DEST_TTL {
+            continue;
+        }
+        match (at(before, ttl), now) {
+            (None, Some(b)) => {
+                hops.push(format!("hop {ttl} added ({b})"));
+                routed = true;
+            }
+            (None, None) => {}
+            (Some(prev), now) if prev == now => {}
+            (Some(Some(a)), Some(b)) => {
+                hops.push(format!("hop {ttl} {a} → {b}"));
+                routed = true;
+            }
+            (Some(Some(a)), None) => hops.push(format!("hop {ttl} {a} → no answer")),
+            (Some(None), Some(b)) => hops.push(format!("hop {ttl} now answers ({b})")),
+            (Some(None), None) => {}
+        }
+    }
+    let (was_at, now_at) = (dest_ttl(before, dest), dest_ttl(after, dest));
+    let dest_clause = match (was_at, now_at) {
+        (a, b) if a == b => None,
+        (Some(a), Some(b)) => Some(format!("dest now hop {b} (was {a})")),
+        (None, Some(b)) => Some(format!("dest now reached at hop {b}")),
+        (Some(a), None) => Some(format!("dest no longer reached (was hop {a})")),
+        (None, None) => None,
+    };
+    // Hops dropped from the end are the destination moving closer; say that
+    // once, through the dest clause, rather than listing every hop it ate.
+    if dest_clause.is_none() {
+        let dropped: Vec<u8> = before
+            .iter()
+            .filter(|(ttl, _)| *ttl != MonitoredHop::DEST_TTL && at(after, *ttl).is_none())
+            .map(|(ttl, _)| *ttl)
+            .collect();
+        if let (Some(first), Some(last)) = (dropped.first(), dropped.last()) {
+            hops.push(if first == last {
+                format!("hop {first} dropped")
+            } else {
+                format!("hops {first}–{last} dropped")
+            });
+            routed = true;
+        }
+    }
+    if dest_clause.is_some() {
+        routed = true;
+    }
+    if !routed {
+        return None;
+    }
+    if hops.len() > 4 {
+        let more = hops.len() - 3;
+        hops.truncate(3);
+        hops.push(format!("+{more} more hops"));
+    }
+    hops.extend(dest_clause);
+    Some(hops.join(" · "))
+}
+
+/// Put the route change on the timeline, with the public IP checked while we
+/// are at it: a new path often means a new egress, and that is the question
+/// the reader asks next. Only a change triggers the check, so a steady path
+/// costs no requests. A moved public IP re-points the discovered "public IP"
+/// target, as DNS re-resolution does for a renamed one.
+async fn report_path_change(
+    state: &Arc<Mutex<AppState>>,
+    cfg: &Config,
+    generation: u64,
+    change: String,
+) {
+    let public = if cfg.public_ip_url.trim().is_empty() {
+        None
+    } else {
+        Some(
+            crate::collectors::discovery::fetch_public_ip(cfg)
+                .await
+                .ok(),
+        )
+    };
+    let mut s = state.lock().unwrap();
+    let Some(target) = s
+        .hop_monitor
+        .as_ref()
+        .filter(|m| m.generation == generation)
+        .map(|m| m.target.clone())
+    else {
+        return;
+    };
+    let known = s
+        .targets
+        .iter_mut()
+        .find(|t| t.discovered && t.label == "public IP");
+    let public_clause = match (public, known) {
+        (Some(Some(now)), Some(t)) if t.addr != now => {
+            let was = t.addr;
+            t.addr = now; // the ping task notices and rebinds
+            t.reset();
+            format!(" · public IP → {now} (was {was})")
+        }
+        (Some(Some(now)), _) => format!(" · public IP still {now}"),
+        (Some(None), _) => " · public IP could not be checked".to_string(),
+        (None, _) => String::new(),
+    };
+    s.notice_event(
+        crate::verdict::Severity::Info,
+        crate::app::EventCategory::Path,
+        format!(
+            "path changed → {target}: {change}{public_clause} — the changed hops' stats start over"
+        ),
+    );
 }
 
 /// True once a newer monitor run (or none at all) owns the state.
@@ -333,6 +502,88 @@ mod tests {
         // Route change: fresh statistics, and a probe for the new address.
         assert_eq!(merge_hop(&mut m, 1, Some(ip(2))), Some(ip(2)));
         assert_eq!(m.hops[0].stat.as_ref().unwrap().sent, 0);
+    }
+
+    /// A re-walk that finds the same path says nothing; one that finds a
+    /// different router, a new hop or the destination at another TTL writes
+    /// what moved. Hops that only stop or start answering are not a route
+    /// change on their own.
+    #[test]
+    fn path_changes_are_described_hop_by_hop() {
+        let dest = ip(9);
+        let path = |hops: &[(u8, Option<IpAddr>)]| hops.to_vec();
+        let steady = path(&[
+            (1, Some(ip(1))),
+            (2, Some(ip(2))),
+            (3, None),
+            (4, Some(dest)),
+        ]);
+        assert_eq!(describe_path_change(&steady, &steady, dest), None);
+
+        // A router swapped at hop 2.
+        let rerouted = path(&[
+            (1, Some(ip(1))),
+            (2, Some(ip(22))),
+            (3, None),
+            (4, Some(dest)),
+        ]);
+        assert_eq!(
+            describe_path_change(&steady, &rerouted, dest).as_deref(),
+            Some("hop 2 10.0.0.2 → 10.0.0.22")
+        );
+
+        // Hop 2 merely went quiet: rate limiting, not a route change.
+        let quiet = path(&[(1, Some(ip(1))), (2, None), (3, None), (4, Some(dest))]);
+        assert_eq!(describe_path_change(&steady, &quiet, dest), None);
+        assert_eq!(describe_path_change(&quiet, &steady, dest), None);
+        // …but alongside a real change it is worth a word, since its stats reset.
+        let both = path(&[(1, Some(ip(11))), (2, None), (3, None), (4, Some(dest))]);
+        assert_eq!(
+            describe_path_change(&steady, &both, dest).as_deref(),
+            Some("hop 1 10.0.0.1 → 10.0.0.11 · hop 2 10.0.0.2 → no answer")
+        );
+
+        // The destination answers two hops sooner: the dropped tail is the
+        // dest moving, said once.
+        let shorter = path(&[(1, Some(ip(1))), (2, Some(dest))]);
+        assert_eq!(
+            describe_path_change(&steady, &shorter, dest).as_deref(),
+            Some("hop 2 10.0.0.2 → 10.0.0.9 · dest now hop 2 (was 4)")
+        );
+        // And further away: the new hop and the new end.
+        let longer = path(&[
+            (1, Some(ip(1))),
+            (2, Some(ip(2))),
+            (3, None),
+            (4, Some(ip(4))),
+            (5, Some(dest)),
+        ]);
+        assert_eq!(
+            describe_path_change(&steady, &longer, dest).as_deref(),
+            Some("hop 4 10.0.0.9 → 10.0.0.4 · hop 5 added (10.0.0.9) · dest now hop 5 (was 4)")
+        );
+
+        // Unreached → reached, with the placeholder row ignored.
+        let unreached = path(&[
+            (1, Some(ip(1))),
+            (2, None),
+            (MonitoredHop::DEST_TTL, Some(dest)),
+        ]);
+        assert_eq!(
+            describe_path_change(&unreached, &shorter, dest).as_deref(),
+            Some("hop 2 now answers (10.0.0.9) · dest now reached at hop 2")
+        );
+        assert_eq!(
+            describe_path_change(&shorter, &unreached, dest).as_deref(),
+            Some("hop 2 10.0.0.9 → no answer · dest no longer reached (was hop 2)")
+        );
+
+        // A wholesale re-route is cut to three hops and a count.
+        let a: Vec<_> = (1..=7).map(|t| (t, Some(ip(t)))).collect();
+        let b: Vec<_> = (1..=7).map(|t| (t, Some(ip(t + 100)))).collect();
+        let text = describe_path_change(&a, &b, dest).unwrap();
+        assert!(text.ends_with(" · +4 more hops"), "{text}");
+        assert_eq!(text.matches(" → ").count(), 3, "{text}");
     }
 
     #[test]

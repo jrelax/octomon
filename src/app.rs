@@ -563,6 +563,9 @@ pub struct Throughput {
     pub up_bps: f64,
     pub down_hist: History,
     pub up_hist: History,
+    /// When the newest history sample was taken, so the talkers' slower
+    /// history can be placed on the same time axis.
+    pub sampled_at: Option<std::time::Instant>,
 }
 
 /// Lifecycle of an on-demand speed test.
@@ -644,6 +647,11 @@ pub struct ProcBandwidth {
     pub up_bps: f64,
     /// TCP retransmissions per second this interval (connection-health signal).
     pub retx_per_sec: f64,
+    /// Rate per collector tick (bytes/sec), oldest first, up to five minutes.
+    /// Only the published rows carry it: exactly the rows the '/' filter can
+    /// match, which is what the stacked bandwidth graph sums.
+    pub down_hist: Vec<u64>,
+    pub up_hist: Vec<u64>,
 }
 
 /// Bandwidth to one remote address, summed over every socket and process
@@ -670,6 +678,9 @@ pub struct RemoteBandwidth {
     /// Rates this interval; zero when idle.
     pub down_bps: f64,
     pub up_bps: f64,
+    /// As on [`ProcBandwidth`].
+    pub down_hist: Vec<u64>,
+    pub up_hist: Vec<u64>,
 }
 
 /// Which of the Network panel's addresses a [`NetAddr`] is: the renderer
@@ -1812,6 +1823,8 @@ mod tests {
             share: 0.0,
             down_bps: 0.0,
             up_bps: 0.0,
+            down_hist: Vec::new(),
+            up_hist: Vec::new(),
         };
         let mut s = AppState::new(vec![]);
         s.bw_view = BwView::Remotes;
@@ -1828,6 +1841,149 @@ mod tests {
         s.bw_filter = "no-such".into();
         assert!(s.remote_order().is_empty());
         assert_eq!(s.remote_order_all().len(), 2, "the bundle stays complete");
+    }
+
+    /// The stacked graph sums exactly the rows the filter keeps, lined up by
+    /// their newest sample, and stretches the talkers' tick over the graph's
+    /// columns.
+    #[test]
+    fn filtered_bw_hist_sums_only_the_shown_rows() {
+        let proc = |name: &str, bps: f64, hist: &[u64]| ProcBandwidth {
+            name: name.into(),
+            down_bps: bps,
+            up_bps: bps / 2.0,
+            down_hist: hist.to_vec(),
+            up_hist: hist.iter().map(|v| v / 2).collect(),
+            ..Default::default()
+        };
+        let mut s = AppState::new(vec![]);
+        // One column per tick, both clocks in step, so the sums read off.
+        s.tp_interval_ms = 2000;
+        let now = std::time::Instant::now();
+        s.throughput.sampled_at = Some(now);
+        s.procs_sampled_at = Some(now);
+        s.processes = vec![
+            proc("firefox", 100.0, &[10, 20, 30]),
+            proc("firefox-helper", 50.0, &[5]),
+            proc("rsync", 1000.0, &[700, 700, 700]),
+        ];
+        assert!(s.filtered_bw_hist(10).is_none(), "no filter, no overlay");
+        s.bw_filter = "fire".into();
+        let fb = s.filtered_bw_hist(3).unwrap();
+        assert_eq!(fb.down, vec![10, 20, 35], "newest samples line up");
+        assert_eq!(fb.up, vec![5, 10, 17]);
+        assert!((fb.down_now - 150.0).abs() < 1e-9);
+        assert!((fb.up_now - 75.0).abs() < 1e-9);
+        // A pinned row that does not match is not on screen, so not summed.
+        s.pinned_procs.push("rsync".into());
+        assert_eq!(s.filtered_bw_hist(3).unwrap().down, vec![10, 20, 35]);
+        // Nothing matches: zeros, not None — the dim total still shows.
+        s.bw_filter = "zzz".into();
+        let fb = s.filtered_bw_hist(3).unwrap();
+        assert!(fb.down == vec![0, 0, 0] && fb.down_now == 0.0);
+        // At the default 1 s graph cadence each 2 s tick spans two columns.
+        s.tp_interval_ms = 1000;
+        s.bw_filter = "helper".into();
+        assert_eq!(s.filtered_bw_hist(4).unwrap().down, vec![0, 0, 5, 5]);
+        // The remotes table has its own rows and its own filter.
+        s.bw_view = BwView::Remotes;
+        s.bw_filter = "151".into();
+        s.remotes = vec![RemoteBandwidth {
+            addr: "151.101.193.111".parse().unwrap(),
+            port: 443,
+            ports: 1,
+            process: "curl".into(),
+            down_bytes: 0,
+            up_bytes: 0,
+            total_bytes: 0,
+            share: 0.0,
+            down_bps: 7.0,
+            up_bps: 0.0,
+            down_hist: vec![3, 4],
+            up_hist: vec![0, 0],
+        }];
+        let fb = s.filtered_bw_hist(4).unwrap();
+        assert_eq!(fb.down, vec![3, 3, 4, 4]);
+        assert!((fb.down_now - 7.0).abs() < 1e-9);
+    }
+
+    /// The talkers tick lands every two seconds while the graph gains a
+    /// column every second. Placing ticks by time keeps each one on the same
+    /// columns as the graph advances: a second after the tick, the newest
+    /// column carries the tick still running, and nothing slips.
+    #[test]
+    fn ticks_are_placed_on_columns_by_time_not_count() {
+        // In step: each tick covers two columns.
+        assert_eq!(
+            place_on_columns(&[1, 2, 3], 6, 0, 1000, 2000),
+            vec![1, 1, 2, 2, 3, 3]
+        );
+        // One second later the graph has a new column; the ticks stay put
+        // and the running tick extends into it.
+        assert_eq!(
+            place_on_columns(&[1, 2, 3], 6, 1000, 1000, 2000),
+            vec![1, 2, 2, 3, 3, 3]
+        );
+        // The talkers published a little after the graph's newest sample:
+        // their tick still covers that column's midpoint, so nothing moves…
+        assert_eq!(
+            place_on_columns(&[1, 2, 3], 6, -300, 1000, 2000),
+            vec![1, 1, 2, 2, 3, 3]
+        );
+        // …until it is more than half a column ahead, when the newest tick
+        // has only one column of graph under it yet.
+        assert_eq!(
+            place_on_columns(&[1, 2, 3], 6, -700, 1000, 2000),
+            vec![0, 1, 1, 2, 2, 3]
+        );
+        // Equal clocks: one column per tick; too few ticks pad with zeros.
+        assert_eq!(place_on_columns(&[1, 2, 3], 2, 0, 2000, 2000), vec![2, 3]);
+        assert_eq!(
+            place_on_columns(&[1, 2], 5, 0, 2000, 2000),
+            vec![0, 0, 0, 1, 2]
+        );
+        assert_eq!(place_on_columns(&[], 3, 0, 1000, 2000), vec![0, 0, 0]);
+        // A faster graph: 500 ms columns, four per tick.
+        assert_eq!(place_on_columns(&[7], 5, 0, 500, 2000), vec![0, 7, 7, 7, 7]);
+        assert_eq!(
+            sum_tail_aligned([&[1u64, 2, 3][..], &[10][..]].into_iter()),
+            vec![1, 2, 13]
+        );
+        assert_eq!(sum_tail_aligned(std::iter::empty()), Vec::<u64>::new());
+    }
+
+    /// A newer version found at startup opens the update notice, but only
+    /// once nothing else is on screen; found later, it is a timeline entry
+    /// only. The same version is never announced twice.
+    #[test]
+    fn a_newer_version_at_startup_raises_the_notice_once_the_screen_is_free() {
+        let mut s = AppState::new(vec![]);
+        s.overlay = Overlay::Explainer;
+        s.announce_update("9.9.9".into(), true);
+        assert_eq!(s.update_available.as_deref(), Some("9.9.9"));
+        assert_eq!(s.events.len(), 1);
+        assert!(s.events[0].message.contains("v9.9.9 is available"));
+        s.surface_pending_update();
+        assert_eq!(
+            s.overlay,
+            Overlay::Explainer,
+            "the welcome keeps the screen"
+        );
+        s.overlay = Overlay::None;
+        s.surface_pending_update();
+        assert_eq!(s.overlay, Overlay::Update);
+        assert!(!s.update_pending);
+        // Announced again (another refresh): nothing new.
+        s.overlay = Overlay::None;
+        s.announce_update("9.9.9".into(), true);
+        assert_eq!(s.events.len(), 1);
+        s.surface_pending_update();
+        assert_eq!(s.overlay, Overlay::None);
+        // Found mid-session: timeline only.
+        s.announce_update("9.9.10".into(), false);
+        assert_eq!(s.events.len(), 2);
+        s.surface_pending_update();
+        assert_eq!(s.overlay, Overlay::None);
     }
 
     /// '/' on one table must not narrow the other: each table keeps its own
@@ -1851,6 +2007,8 @@ mod tests {
             share: 0.0,
             down_bps: 0.0,
             up_bps: 0.0,
+            down_hist: Vec::new(),
+            up_hist: Vec::new(),
         }];
         // Typed while the processes table is shown…
         s.bw_filter = "fire".into();
@@ -2303,6 +2461,61 @@ pub struct EdgeInfo {
     pub tcp_rtt_ms: Option<f64>,
 }
 
+/// The '/'-filtered rows' throughput, summed, for the stacked bandwidth
+/// graph; see [`AppState::filtered_bw_hist`].
+pub struct FilteredBw {
+    /// Sum of the kept rows' current rates (bytes/sec).
+    pub down_now: f64,
+    pub up_now: f64,
+    /// Bytes/sec per graph column, oldest first, at most the width asked for.
+    pub down: Vec<u64>,
+    pub up: Vec<u64>,
+}
+
+/// Sum several oldest-first series aligned at their newest sample. The result
+/// is as long as the longest input: a row that appeared mid-session simply
+/// contributes nothing before its first sample.
+fn sum_tail_aligned<'a>(series: impl Iterator<Item = &'a [u64]>) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for s in series {
+        if s.len() > out.len() {
+            let pad = s.len() - out.len();
+            out.splice(0..0, std::iter::repeat_n(0, pad));
+        }
+        let off = out.len() - s.len();
+        for (o, v) in out[off..].iter_mut().zip(s) {
+            *o = o.saturating_add(*v);
+        }
+    }
+    out
+}
+
+/// Lay oldest-first `ticks` (each `tick_ms` long, the newest ending `lag_ms`
+/// before the graph's newest column ends) onto `cols` graph columns of
+/// `iv_ms` each, newest last. A column takes the tick that covered its
+/// midpoint; a column past the newest tick (the tick still running) extends
+/// that tick, and one before the oldest is zero. Returns exactly `cols`.
+fn place_on_columns(ticks: &[u64], cols: usize, lag_ms: i64, iv_ms: u64, tick_ms: u64) -> Vec<u64> {
+    let (iv, tick) = (iv_ms.max(1) as f64, tick_ms.max(1) as f64);
+    let newest = ticks.len() as i64 - 1;
+    (0..cols)
+        .rev()
+        .map(|r| {
+            // Milliseconds from this column's midpoint to the newest tick's end.
+            let d = (r as f64 + 0.5) * iv - lag_ms as f64;
+            let j = if d < 0.0 {
+                newest
+            } else {
+                newest - (d / tick).floor() as i64
+            };
+            usize::try_from(j)
+                .ok()
+                .and_then(|j| ticks.get(j).copied())
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
 impl AppState {
     /// Whose network this is, as the edge sees it. The v4 answer leads; when
     /// it carries the number but not the name and the v6 answer names the
@@ -2400,7 +2613,7 @@ pub enum InputMode {
 
 /// Which full-screen overlay is up, if any. One at a time; the order here is
 /// also the precedence at startup (setup problems before anything else).
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Overlay {
     #[default]
     None,
@@ -2413,6 +2626,9 @@ pub enum Overlay {
     Events,
     /// First-run welcome: what octomon answers and that it learns baselines.
     Explainer,
+    /// A newer octomon is out, found by the startup edge check; where to get
+    /// it. Any key dismisses it.
+    Update,
     /// Every stored network location and its learned baseline.
     Locations,
     /// Who owns the selected address (RDAP / whois).
@@ -2655,6 +2871,12 @@ pub struct AppState {
     /// Display live rates in bits (Mb/s) rather than bytes (MB/s) — the
     /// config's `bandwidth_units`, copied here for the render path.
     pub bits_units: bool,
+    /// The throughput collector's sample interval (config `sample_interval_ms`),
+    /// so the per-row talkers history can be stretched onto the graph's columns.
+    pub tp_interval_ms: u64,
+    /// When the talkers collector last published its rows (the end of their
+    /// newest history tick).
+    pub procs_sampled_at: Option<std::time::Instant>,
     /// Which table the [z] zoom overlay shows while `overlay == Zoom`.
     pub zoom_view: ZoomView,
     /// pid → what the OS knows about it, filled when the zoom opens over the
@@ -2745,6 +2967,10 @@ pub struct AppState {
     pub baseline_key: Option<String>,
     /// Show the first-run explainer once the startup notice is dismissed.
     pub explainer_pending: bool,
+    /// The startup version check found a newer release while another modal
+    /// (setup notice, welcome) held the screen, or before the first frame:
+    /// the update notice opens as soon as nothing else is up.
+    pub update_pending: bool,
     /// Stored locations for the [L] overlay: (fingerprint key, baseline),
     /// loaded from disk when the overlay opens. `None` = still loading.
     pub locations: Option<Vec<(String, crate::baseline::Baseline)>>,
@@ -2918,6 +3144,8 @@ impl AppState {
             samples_per_sec: 1.0,
             graph_marker: ratatui::symbols::Marker::Braille,
             bits_units: false,
+            tp_interval_ms: 1000,
+            procs_sampled_at: None,
             zoom_view: ZoomView::default(),
             proc_details: std::collections::HashMap::new(),
             bar_set: ratatui::symbols::bar::NINE_LEVELS,
@@ -2953,6 +3181,7 @@ impl AppState {
             baseline: None,
             baseline_key: None,
             explainer_pending: false,
+            update_pending: false,
             locations: None,
             rename_target: None,
             locations_sel: 0,
@@ -3024,6 +3253,7 @@ impl AppState {
         self.notice = live.notice.clone();
         self.paused = live.paused;
         self.explainer_pending = live.explainer_pending;
+        self.update_pending = live.update_pending;
         self.locations = live.locations.clone();
         self.locations_sel = live.locations_sel;
         self.events_scroll = live.events_scroll;
@@ -3067,6 +3297,41 @@ impl AppState {
             }
         }
         self.traceroute = None;
+    }
+
+    /// A newer released version exists. Say so once per version on the
+    /// timeline, where it keeps, and remember it for the help title. When the
+    /// startup check is the one that found it, also raise the update notice
+    /// for any key to dismiss; a later refresh finding it mid-session stays
+    /// on the timeline, since an interruption then would be about nothing the
+    /// user can act on without quitting. Mentioning is the whole feature —
+    /// octomon never updates itself.
+    pub fn announce_update(&mut self, latest: String, at_startup: bool) {
+        if self.update_available.as_deref() == Some(latest.as_str()) {
+            return;
+        }
+        self.push_event(
+            crate::verdict::Severity::Info,
+            EventCategory::Logging,
+            format!(
+                "octomon v{latest} is available (you run v{}) — github.com/securitypedant/octomon/releases",
+                env!("CARGO_PKG_VERSION")
+            ),
+        );
+        self.update_available = Some(latest);
+        if at_startup {
+            self.update_pending = true;
+        }
+    }
+
+    /// Open the pending update notice once no other modal holds the screen.
+    /// Called before every frame, so it follows the setup notice and the
+    /// first-run welcome rather than fighting them for the slot.
+    pub fn surface_pending_update(&mut self) {
+        if self.update_pending && self.overlay == Overlay::None {
+            self.update_pending = false;
+            self.overlay = Overlay::Update;
+        }
     }
 
     /// Append to the session timeline, evicting the oldest past the cap.
@@ -3450,6 +3715,82 @@ impl AppState {
             });
         }
         order
+    }
+
+    /// What the '/' filter keeps, as a throughput series the graph can stack
+    /// under the interface total. `None` when no filter is active on the shown
+    /// table. The rows are exactly those [`Self::process_order`] /
+    /// [`Self::remote_order`] draw (so a pinned row that does not match is
+    /// out, as on screen), summed from their newest sample backwards, then
+    /// laid onto the graph's columns by time: each column takes the tick that
+    /// was running at that column's moment, so the two series keep their
+    /// places as the graph advances rather than slipping a column against
+    /// each other between ticks. A filter that matches nothing yields all
+    /// zeros: the graph then shows the total alone, dim.
+    ///
+    /// The two series are not the same measurement. The total is the
+    /// interface's counters; this is socket counters, and loopback bytes are
+    /// counted here but never on the wire. The renderer expects a column
+    /// where the part exceeds the total and lets it.
+    pub fn filtered_bw_hist(&self, cols: usize) -> Option<FilteredBw> {
+        if self.bw_filter.trim().is_empty() {
+            return None;
+        }
+        // How far the graph's newest column runs past the talkers' newest
+        // tick. Negative when the talkers published more recently.
+        let lag_ms = match (self.throughput.sampled_at, self.procs_sampled_at) {
+            (Some(tp), Some(pb)) => {
+                if tp >= pb {
+                    tp.duration_since(pb).as_millis() as i64
+                } else {
+                    -(pb.duration_since(tp).as_millis() as i64)
+                }
+            }
+            _ => 0,
+        };
+        let place = |ticks: &[u64]| {
+            place_on_columns(
+                ticks,
+                cols,
+                lag_ms,
+                self.tp_interval_ms,
+                crate::collectors::procbw::TICK_MS,
+            )
+        };
+        let (down_now, up_now, down, up) = match self.bw_view {
+            BwView::Processes => {
+                let rows: Vec<&ProcBandwidth> = self
+                    .process_order()
+                    .into_iter()
+                    .map(|i| &self.processes[i])
+                    .collect();
+                (
+                    rows.iter().map(|p| p.down_bps).sum(),
+                    rows.iter().map(|p| p.up_bps).sum(),
+                    sum_tail_aligned(rows.iter().map(|p| p.down_hist.as_slice())),
+                    sum_tail_aligned(rows.iter().map(|p| p.up_hist.as_slice())),
+                )
+            }
+            BwView::Remotes => {
+                let rows: Vec<&RemoteBandwidth> = self
+                    .remote_order()
+                    .into_iter()
+                    .map(|i| &self.remotes[i])
+                    .collect();
+                (
+                    rows.iter().map(|r| r.down_bps).sum(),
+                    rows.iter().map(|r| r.up_bps).sum(),
+                    sum_tail_aligned(rows.iter().map(|r| r.down_hist.as_slice())),
+                    sum_tail_aligned(rows.iter().map(|r| r.up_hist.as_slice())),
+                )
+            }
+        };
+        Some(FilteredBw {
+            down_now,
+            up_now,
+            down: place(&down),
+            up: place(&up),
+        })
     }
 
     /// Number of recent samples the current window covers.

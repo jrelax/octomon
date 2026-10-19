@@ -238,7 +238,7 @@ Press **`?`** in the app for the complete, always-current list. The essentials:
 | `a` / `d` · `i` | Add / delete a target · stats ICMP ↔ TCP `:443` ↔ egress (once the monitor has run) |
 | `g` · `t` · `m` · `W` | Graph · traceroute once · monitor every hop · whois |
 | **Bandwidth** | |
-| `n` · `z` · `/` | Processes → remotes → history · zoom · filter rows |
+| `n` · `z` · `/` | Processes → remotes → history · zoom · filter rows (the graphs follow) |
 | `v` / `I` / `V` | Cycle · add · remove a speed-test provider |
 | `W` / `a` · `p` / `u` · `o` | Whois / add remote · pin / unpin · follow row |
 | **Network** | |

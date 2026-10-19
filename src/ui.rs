@@ -68,6 +68,7 @@ pub fn render(f: &mut Frame, s: &AppState) {
         Overlay::Triage => triage_overlay(f, s, f.area()),
         Overlay::Events => events_overlay(f, s, f.area()),
         Overlay::Explainer => explainer_overlay(f, f.area()),
+        Overlay::Update => update_overlay(f, s, f.area()),
         Overlay::Locations => locations_overlay(f, s, f.area()),
         Overlay::Whois => whois_overlay(f, s, f.area()),
         Overlay::Routes => routes_overlay(f, s, f.area()),
@@ -1267,6 +1268,69 @@ fn explainer_overlay(f: &mut Frame, area: Rect) {
     } else {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
+}
+
+/// A newer octomon is out: both versions and every way to get it. Shown at
+/// startup for as long as the newer version exists; any key dismisses it.
+fn update_overlay(f: &mut Frame, s: &AppState, area: Rect) {
+    let latest = s.update_available.as_deref().unwrap_or("?");
+    let way = |how: &str, cmd: &str| {
+        Line::from(vec![
+            Span::styled(" ● ", Style::new().fg(theme::accent())),
+            Span::styled(format!("{how:<9}"), Style::new().fg(theme::dim())),
+            Span::styled(cmd.to_string(), Style::new().fg(theme::text())),
+        ])
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!(" octomon v{latest} is available"),
+                Style::new().fg(theme::accent()).bold(),
+            ),
+            Span::styled(
+                format!(" — you are running v{}", env!("CARGO_PKG_VERSION")),
+                Style::new().fg(theme::text()),
+            ),
+        ]),
+        Line::from(""),
+        way("Homebrew", "brew upgrade octomon"),
+        way("winget", "winget upgrade SimonThorpe.Octomon"),
+        way("apt", "sudo apt update && sudo apt install octomon"),
+        way("cargo", "cargo install octomon"),
+        way("binaries", "github.com/securitypedant/octomon/releases"),
+        Line::from(""),
+        Line::from(Span::styled(
+            " what changed: octomon.dev/changelog",
+            Style::new().fg(theme::text()),
+        )),
+        Line::from(Span::styled(
+            " octomon never updates itself",
+            Style::new().fg(theme::dim()).italic(),
+        )),
+    ];
+    let w = (64u16 + 2).min(area.width);
+    let h = (lines.len() as u16 + 2 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, rect);
+    let outer = Block::bordered()
+        .padding(Padding::new(1, 1, 1, 1))
+        .title(Span::styled(
+            " octomon · update available ",
+            Style::new().bold(),
+        ))
+        .title_bottom(Span::styled(
+            " press any key to continue ",
+            Style::new().fg(theme::dim()),
+        ))
+        .border_style(Style::new().fg(theme::accent()));
+    let inner = outer.inner(rect);
+    f.render_widget(outer, rect);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 /// The session timeline, newest first: what changed and when. This is the
@@ -4073,40 +4137,38 @@ fn bandwidth_panel(f: &mut Frame, s: &AppState, area: Rect) {
 
     let graphs =
         Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(rows[1]);
-    // The title line inside each Sparkline's block costs a row, so the trace is
-    // scaled against one row fewer than the area it is given.
-    let spark_h = |r: Rect| r.height.saturating_sub(1);
-    let (ddata, dmax) = spark_floor(&tp.down_hist, graphs[0].width, spark_h(graphs[0]));
-    let down = Sparkline::default()
-        .data(ddata)
-        .max(dmax)
-        .bar_set(s.bar_set.clone())
-        .style(Style::new().fg(Color::Green))
-        .block(Block::new().title(Span::styled(
-            format!(
-                " ↓ down  {}{}",
-                fmt_rate(tp.down_bps, s.bits_units),
-                fmt_mbits(tp.down_bps, s.bits_units)
-            ),
-            Style::new().fg(Color::Green).bold(),
-        )));
-    f.render_widget(down, graphs[0]);
-
-    let (udata, umax) = spark_floor(&tp.up_hist, graphs[1].width, spark_h(graphs[1]));
-    let up = Sparkline::default()
-        .data(udata)
-        .max(umax)
-        .bar_set(s.bar_set.clone())
-        .style(Style::new().fg(Color::Magenta))
-        .block(Block::new().title(Span::styled(
-            format!(
-                " ↑ up    {}{}",
-                fmt_rate(tp.up_bps, s.bits_units),
-                fmt_mbits(tp.up_bps, s.bits_units)
-            ),
-            Style::new().fg(Color::Magenta).bold(),
-        )));
-    f.render_widget(up, graphs[1]);
+    // Under a '/' filter the graphs stack what the filter keeps under the
+    // interface total; otherwise they are the plain traces. One code path
+    // for the split view, full screen and the zoom.
+    let filtered = s.filtered_bw_hist(graphs[0].width as usize);
+    throughput_graph(
+        f,
+        s,
+        graphs[0],
+        ThroughputTrace {
+            label: "↓ down ",
+            now: tp.down_bps,
+            hist: &tp.down_hist,
+            part: filtered
+                .as_ref()
+                .map(|fb| (fb.down.as_slice(), fb.down_now)),
+            bright: Color::Green,
+            dim: theme::down_dim(),
+        },
+    );
+    throughput_graph(
+        f,
+        s,
+        graphs[1],
+        ThroughputTrace {
+            label: "↑ up   ",
+            now: tp.up_bps,
+            hist: &tp.up_hist,
+            part: filtered.as_ref().map(|fb| (fb.up.as_slice(), fb.up_now)),
+            bright: Color::Magenta,
+            dim: theme::up_dim(),
+        },
+    );
 
     // Full-screen: the talkers and speed-test history each get their own panel,
     // and 'n' moves the cursor between them. Given the width, processes and
@@ -4333,6 +4395,153 @@ fn speedtest_results(f: &mut Frame, s: &AppState, area: Rect, focused: bool) {
         Constraint::Length(8),
     ];
     f.render_widget(Table::new(rows, widths).header(header), table_area);
+}
+
+/// One throughput trace: the interface total and, under a '/' filter, the
+/// part of it the filtered rows account for.
+struct ThroughputTrace<'a> {
+    /// Arrow and word, padded so both titles' rates line up.
+    label: &'a str,
+    /// The interface's current rate (bytes/sec).
+    now: f64,
+    hist: &'a crate::app::History,
+    /// The filtered rows' series (bytes/sec per column, oldest first) and
+    /// their current rate, when a filter is active.
+    part: Option<(&'a [u64], f64)>,
+    bright: Color,
+    dim: Color,
+}
+
+/// The plain sparkline, or the stacked two-tone trace when a filter is on.
+fn throughput_graph(f: &mut Frame, s: &AppState, area: Rect, t: ThroughputTrace) {
+    let title_style = Style::new().fg(t.bright).bold();
+    let Some((part, part_now)) = t.part else {
+        // The title line inside the Sparkline's block costs a row, so the
+        // trace is scaled against one row fewer than the area it is given.
+        let (data, max) = spark_floor(t.hist, area.width, area.height.saturating_sub(1));
+        let spark = Sparkline::default()
+            .data(data)
+            .max(max)
+            .bar_set(s.bar_set.clone())
+            .style(Style::new().fg(t.bright))
+            .block(Block::new().title(Span::styled(
+                format!(
+                    " {} {}{}",
+                    t.label,
+                    fmt_rate(t.now, s.bits_units),
+                    fmt_mbits(t.now, s.bits_units)
+                ),
+                title_style,
+            )));
+        f.render_widget(spark, area);
+        return;
+    };
+    // Stacked: the filter's rows bright from the baseline, the rest of the
+    // total dim above. No Mb/s suffix here; the filter text takes the room.
+    let block = Block::new().title(Span::styled(
+        format!(
+            " {} {} · ⌕ {} {}",
+            t.label,
+            fmt_rate(t.now, s.bits_units),
+            s.bw_filter.trim(),
+            fmt_rate(part_now, s.bits_units)
+        ),
+        title_style,
+    ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let total = t.hist.tail_u64(inner.width as usize);
+    // Newest samples coincide: pad or trim the part at the front.
+    let part: Vec<u64> = if part.len() >= total.len() {
+        part[part.len() - total.len()..].to_vec()
+    } else {
+        std::iter::repeat_n(0, total.len() - part.len())
+            .chain(part.iter().copied())
+            .collect()
+    };
+    stacked_spark(
+        f.buffer_mut(),
+        inner,
+        &total,
+        &part,
+        t.bright,
+        t.dim,
+        &s.bar_set,
+    );
+}
+
+/// Two-tone bars: `part` bright from the baseline, the rest of `total` dim
+/// above it, so the outline is still the interface total. Laid out like
+/// `Sparkline` (left to right, index 0 at the left edge). Every non-zero
+/// value gets at least one eighth and a zero total still draws the dim
+/// baseline, as `floor_to_visible` guarantees for the plain trace; a `part`
+/// above `total` (the two are sampled on different clocks) simply takes the
+/// column.
+///
+/// Where the bright part ends inside a cell, the partial glyph gets the dim
+/// colour as its background, so the remainder shows through the glyph's
+/// unfilled top. When the total also ends inside that same cell this
+/// overstates it by less than a row, which the eye cannot tell.
+fn stacked_spark(
+    buf: &mut Buffer,
+    area: Rect,
+    total: &[u64],
+    part: &[u64],
+    bright: Color,
+    dim: Color,
+    bar_set: &ratatui::symbols::bar::Set<'_>,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let levels = area.height as u64 * 8;
+    let max = total.iter().chain(part).copied().max().unwrap_or(0);
+    let height = |v: u64| -> u64 {
+        if v == 0 || max == 0 {
+            0
+        } else {
+            ((v as u128 * levels as u128 / max as u128) as u64).max(1)
+        }
+    };
+    let bottom = area.bottom() - 1;
+    for (i, &tv) in total.iter().enumerate().take(area.width as usize) {
+        let x = area.left() + i as u16;
+        let p = height(part.get(i).copied().unwrap_or(0));
+        let t = height(tv).max(1).max(p);
+        for r in 0..area.height as u64 {
+            let (lo, hi) = (r * 8, r * 8 + 8);
+            let cell = &mut buf[(x, bottom - r as u16)];
+            if hi <= p {
+                cell.set_symbol(bar_set.full).set_fg(bright);
+            } else if lo < p {
+                cell.set_symbol(bar_glyph(bar_set, p - lo)).set_fg(bright);
+                if t > p {
+                    cell.set_bg(dim);
+                }
+            } else if hi <= t {
+                cell.set_symbol(bar_set.full).set_fg(dim);
+            } else if lo < t {
+                cell.set_symbol(bar_glyph(bar_set, t - lo)).set_fg(dim);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+/// The glyph for `eighths` (0..=8) of a cell, filled from the bottom.
+fn bar_glyph<'a>(set: &'a ratatui::symbols::bar::Set<'_>, eighths: u64) -> &'a str {
+    match eighths {
+        0 => set.empty,
+        1 => set.one_eighth,
+        2 => set.one_quarter,
+        3 => set.three_eighths,
+        4 => set.half,
+        5 => set.five_eighths,
+        6 => set.three_quarters,
+        7 => set.seven_eighths,
+        _ => set.full,
+    }
 }
 
 /// Sparkline data that guarantees any non-zero sample renders at least one
@@ -6867,6 +7076,155 @@ mod tests {
             during >= before,
             "graph lost bars while typing: {before} -> {during}\n{out}"
         );
+        // With no row matching, the graph is the total alone, dim, and the
+        // graph title says what it is filtered by.
+        assert!(out.contains("↓ down  ") && out.contains("· ⌕ 34 "), "{out}");
+        let mut t = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        t.draw(|f| render(f, &s)).unwrap();
+        let buf = t.backend().buffer();
+        assert!(
+            buf.content().iter().any(|c| c.fg == theme::down_dim()),
+            "the total is drawn dim under a filter"
+        );
+    }
+
+    /// Under a '/' filter the graphs stack: the filtered rows bright from the
+    /// baseline, the rest of the interface total dim on top, in every view
+    /// the graph is drawn in. Clearing the filter restores the plain trace.
+    #[test]
+    fn talkers_filter_stacks_the_filtered_rows_under_the_total() {
+        use crate::app::{Overlay, ProcBandwidth, ProcStatus};
+        let mut s = AppState::new(vec![]);
+        s.throughput.iface = "en0".into();
+        s.tp_interval_ms = 2000;
+        for _ in 0..100 {
+            s.throughput.down_hist.push(1000.0);
+            s.throughput.up_hist.push(1000.0);
+        }
+        s.focus = Panel::Bandwidth;
+        s.proc_status = ProcStatus::Supported;
+        s.processes = vec![ProcBandwidth {
+            name: "firefox".into(),
+            pid: 1,
+            down_bps: 250.0,
+            up_bps: 250.0,
+            down_hist: vec![250; 100],
+            up_hist: vec![250; 100],
+            ..Default::default()
+        }];
+        let probe = |s: &AppState| -> (bool, bool) {
+            let mut t = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            t.draw(|f| render(f, s)).unwrap();
+            let buf = t.backend().buffer();
+            let area = *buf.area();
+            // A bright bar with the dim remainder above it, either as the
+            // cell above (tall graph) or as the partial glyph's background
+            // (a short one): the stack.
+            let mut stacked = false;
+            let mut any_dim = false;
+            for y in 1..area.height {
+                for x in 0..area.width {
+                    let (above, here) = (&buf[(x, y - 1)], &buf[(x, y)]);
+                    any_dim |= here.fg == theme::down_dim() || here.bg == theme::down_dim();
+                    stacked |= here.fg == Color::Green
+                        && "▁▂▃▄▅▆▇█".contains(here.symbol())
+                        && (above.fg == theme::down_dim() || here.bg == theme::down_dim());
+                }
+            }
+            (stacked, any_dim)
+        };
+        for (fullscreen, overlay) in [
+            (true, Overlay::None),
+            (false, Overlay::None),
+            (true, Overlay::Zoom),
+        ] {
+            s.fullscreen = fullscreen;
+            s.overlay = overlay;
+            s.bw_filter = "fire".into();
+            let zoomed = overlay == Overlay::Zoom;
+            let (stacked, _) = probe(&s);
+            assert!(stacked, "fullscreen={fullscreen} zoomed={zoomed}");
+            let out = draw(&s, 120, 40);
+            assert!(out.contains("· ⌕ fire 250 B/s"), "{out}");
+            s.bw_filter.clear();
+            let (_, any_dim) = probe(&s);
+            assert!(!any_dim, "no filter, no dim remainder");
+        }
+    }
+
+    /// The stacked bars, cell by cell.
+    #[test]
+    fn stacked_spark_draws_bright_below_dim() {
+        use ratatui::symbols::bar::{NINE_LEVELS, Set};
+        let (g, d) = (Color::Green, Color::Indexed(22));
+        let area = Rect::new(0, 0, 4, 2);
+        let mut buf = Buffer::empty(area);
+        stacked_spark(
+            &mut buf,
+            area,
+            &[16, 16, 8, 0],
+            &[8, 16, 16, 0],
+            g,
+            d,
+            &NINE_LEVELS,
+        );
+        let cell = |x: u16, y: u16| {
+            (
+                buf[(x, y)].symbol().to_string(),
+                buf[(x, y)].fg,
+                buf[(x, y)].bg,
+            )
+        };
+        // Half filtered: bright below, dim above.
+        assert_eq!(cell(0, 1), ("█".into(), g, Color::Reset));
+        assert_eq!(cell(0, 0), ("█".into(), d, Color::Reset));
+        // All filtered: bright throughout.
+        assert_eq!(cell(1, 1), ("█".into(), g, Color::Reset));
+        assert_eq!(cell(1, 0), ("█".into(), g, Color::Reset));
+        // Part above total (different clocks): the part takes the column.
+        assert_eq!(cell(2, 1), ("█".into(), g, Color::Reset));
+        assert_eq!(cell(2, 0), ("█".into(), g, Color::Reset));
+        // Zero total keeps the dim baseline, as the plain trace does.
+        assert_eq!(cell(3, 1), ("▁".into(), d, Color::Reset));
+        assert_eq!(cell(3, 0), (" ".into(), Color::Reset, Color::Reset));
+
+        // A part ending inside a cell: its partial glyph carries the dim as
+        // background so the remainder shows through.
+        let area = Rect::new(0, 0, 1, 2);
+        let mut buf = Buffer::empty(area);
+        stacked_spark(&mut buf, area, &[16], &[4], g, d, &NINE_LEVELS);
+        assert_eq!(
+            (buf[(0, 1)].symbol(), buf[(0, 1)].fg, buf[(0, 1)].bg),
+            ("▄", g, d)
+        );
+        assert_eq!((buf[(0, 0)].symbol(), buf[(0, 0)].fg), ("█", d));
+
+        // Nothing at all: the dim baseline, never a blank panel.
+        let area = Rect::new(0, 0, 2, 2);
+        let mut buf = Buffer::empty(area);
+        stacked_spark(&mut buf, area, &[0, 0], &[], g, d, &NINE_LEVELS);
+        assert_eq!((buf[(0, 1)].symbol(), buf[(0, 1)].fg), ("▁", d));
+        assert_eq!((buf[(1, 1)].symbol(), buf[(1, 1)].fg), ("▁", d));
+
+        // The coarse console set degrades the partial to a half block, which
+        // with the dim background still reads as half bright, half dim.
+        let coarse = Set {
+            one_eighth: "▄",
+            one_quarter: "▄",
+            three_eighths: "▄",
+            half: "▄",
+            five_eighths: "▄",
+            three_quarters: "▄",
+            seven_eighths: "█",
+            ..NINE_LEVELS
+        };
+        let area = Rect::new(0, 0, 1, 2);
+        let mut buf = Buffer::empty(area);
+        stacked_spark(&mut buf, area, &[16], &[2], g, d, &coarse);
+        assert_eq!(
+            (buf[(0, 1)].symbol(), buf[(0, 1)].fg, buf[(0, 1)].bg),
+            ("▄", g, d)
+        );
     }
 
     /// in the panel title, and explains an empty result instead of drawing a
@@ -6979,6 +7337,26 @@ mod tests {
         assert!(out.contains("my machine, my local network, my ISP"));
         assert!(out.contains("learns what normal looks like"));
         assert!(out.contains("press any key to start"));
+    }
+
+    /// The update notice names both versions, every install route, and how
+    /// to leave it.
+    #[test]
+    fn update_overlay_names_both_versions_and_the_ways_to_upgrade() {
+        let mut s = AppState::new(vec![]);
+        s.update_available = Some("9.9.9".into());
+        s.overlay = Overlay::Update;
+        let out = draw(&s, 100, 30);
+        assert!(out.contains("octomon v9.9.9 is available"), "{out}");
+        assert!(out.contains(&format!("you are running v{}", env!("CARGO_PKG_VERSION"))));
+        assert!(
+            out.contains("never updates itself"),
+            "every line fits: {out}"
+        );
+        assert!(out.contains("brew upgrade octomon"));
+        assert!(out.contains("winget upgrade SimonThorpe.Octomon"));
+        assert!(out.contains("github.com/securitypedant/octomon/releases"));
+        assert!(out.contains("press any key to continue"));
     }
 
     #[test]
@@ -7863,6 +8241,7 @@ mod tests {
             Overlay::Egress,
             Overlay::Locations,
             Overlay::Help,
+            Overlay::Update,
         ] {
             s.overlay = overlay;
             for (w, h) in [(20, 4), (40, 8), (79, 20)] {
@@ -9073,6 +9452,8 @@ mod tests {
                 down_bps: 900_000.0,
                 up_bps: 10_000.0,
                 retx_per_sec: 0.0,
+                down_hist: Vec::new(),
+                up_hist: Vec::new(),
             },
             // Idle now, but keeps its row with its session totals.
             crate::app::ProcBandwidth {
@@ -9097,6 +9478,8 @@ mod tests {
                 share: 0.8,
                 down_bps: 900_000.0,
                 up_bps: 10_000.0,
+                down_hist: Vec::new(),
+                up_hist: Vec::new(),
             },
             RemoteBandwidth {
                 addr: "2606:4700:4700::1111".parse().unwrap(),
@@ -9109,6 +9492,8 @@ mod tests {
                 share: 0.2,
                 down_bps: 0.0,
                 up_bps: 0.0,
+                down_hist: Vec::new(),
+                up_hist: Vec::new(),
             },
         ];
         // Process view by default: no addresses shown.

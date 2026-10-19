@@ -7,6 +7,21 @@
   <description>Every octomon release, newest first, with what changed and why.</description>
   <language>en</language>
   <item>
+    <title>octomon 0.11.6</title>
+    <link>https://octomon.dev/changelog#v0.11.6</link>
+    <guid isPermaLink="false">https://octomon.dev/changelog/v0.11.6</guid>
+    <pubDate>Sun, 18 Oct 2026 00:00:00 GMT</pubDate>
+    <description>Some minor quality of life improvements. Bandwidth graph now reflects what's being filtered, event entry when the monitored path changes, and a word at startup when a newer octomon is out.</description>
+    <content:encoded><![CDATA[<p>Some minor quality of life improvements. Bandwidth graph now reflects what&#39;s being filtered, event entry when the monitored path changes, and a word at startup when a newer octomon is out.</p>
+<ul>
+<li>The Bandwidth graphs follow the <code>/</code> filter. When filtering processes
+or remote targets, their respective bandwidth is now highlighted
+on the bandwidth graph with the current total still displayed, but dimmed.</li>
+<li>When the path monitor&#39;s minute-by-minute re-walk finds the route changed, it now records an event which shows on the timeline (e).</li>
+<li>When a newer octomon is out, the startup version check now says so in a notice over the dashboard.</li>
+</ul>]]></content:encoded>
+  </item>
+  <item>
     <title>octomon 0.11.5</title>
     <link>https://octomon.dev/changelog#v0.11.5</link>
     <guid isPermaLink="false">https://octomon.dev/changelog/v0.11.5</guid>

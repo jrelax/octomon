@@ -670,6 +670,8 @@ mod tests {
             share: 1.0,
             down_bps: 0.0,
             up_bps: 0.0,
+            down_hist: Vec::new(),
+            up_hist: Vec::new(),
         });
         s.pinned_remotes.push("34.46.39.183".parse().unwrap());
         let mut hop = TargetStat::new("hop 2→1.1.1.1".into(), "76.14.0.9".parse().unwrap());

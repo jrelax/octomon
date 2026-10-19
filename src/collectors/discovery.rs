@@ -616,58 +616,31 @@ pub async fn public_ip(state: Arc<Mutex<AppState>>, clients: ping::Clients, cfg:
     if cfg.public_ip_url.trim().is_empty() {
         return true; // switched off, not failed
     }
-    let http = match reqwest::Client::builder()
-        .user_agent(crate::util::USER_AGENT)
-        .timeout(std::time::Duration::from_secs(10))
-        .no_proxy()
-        .build()
-    {
-        Ok(http) => http,
-        Err(e) => {
-            crate::errlog::log("public-ip", format!("could not build an HTTP client: {e}"));
+    let addr = match fetch_public_ip(&cfg).await {
+        Ok(addr) => addr,
+        Err(errors) => {
+            for e in &errors {
+                crate::errlog::log("public-ip", e);
+            }
+            if errors.is_empty() {
+                return false;
+            }
+            // The raw reqwest error chains (two of them, with full URLs) turned
+            // the analysis row into a paragraph. The row gets one readable
+            // sentence; the chains go to the events timeline — once per distinct
+            // failure, not on every retry of the same one.
+            let short = summarize_fetch_errors(&errors);
+            let mut s = state.lock().unwrap();
+            if s.public_ip_error.as_deref() != Some(short.as_str()) {
+                s.push_event(
+                    crate::verdict::Severity::Info,
+                    crate::app::EventCategory::Network,
+                    format!("public IP discovery failed — {}", errors.join(" · ")),
+                );
+            }
+            s.public_ip_error = Some(short);
             return false;
         }
-    };
-    // The configured endpoint first, then Cloudflare's own trace endpoint —
-    // reachable when the configured one is filtered, and the natural answer
-    // when the machine sits behind Cloudflare WARP. Cap the body (an IP is
-    // tiny) and only accept a clean IP literal.
-    let mut errors: Vec<String> = Vec::new();
-    let mut found: Option<IpAddr> = None;
-    for url in [
-        cfg.public_ip_url.trim(),
-        "https://one.one.one.one/cdn-cgi/trace",
-    ] {
-        match crate::util::fetch_text_capped(&http, url, 4096).await {
-            Ok(text) => match parse_public_ip(&text) {
-                Some(addr) => {
-                    found = Some(addr);
-                    break;
-                }
-                None => errors.push(format!("{url}: no address in the answer")),
-            },
-            Err(e) => errors.push(format!("{url}: {e}")),
-        }
-    }
-    let Some(addr) = found else {
-        for e in &errors {
-            crate::errlog::log("public-ip", e);
-        }
-        // The raw reqwest error chains (two of them, with full URLs) turned
-        // the analysis row into a paragraph. The row gets one readable
-        // sentence; the chains go to the events timeline — once per distinct
-        // failure, not on every retry of the same one.
-        let short = summarize_fetch_errors(&errors);
-        let mut s = state.lock().unwrap();
-        if s.public_ip_error.as_deref() != Some(short.as_str()) {
-            s.push_event(
-                crate::verdict::Severity::Info,
-                crate::app::EventCategory::Network,
-                format!("public IP discovery failed — {}", errors.join(" · ")),
-            );
-        }
-        s.public_ip_error = Some(short);
-        return false;
     };
     state.lock().unwrap().public_ip_error = None;
     // The v6 side rides along, on its own: it is never a reason to retry.
@@ -689,6 +662,41 @@ pub async fn public_ip(state: Arc<Mutex<AppState>>, clients: ping::Clients, cfg:
         ping::spawn_for(state, clients, cfg, id, addr);
     }
     true
+}
+
+/// Ask the public-IP endpoints who we are, touching no state: the configured
+/// endpoint first, then Cloudflare's own trace endpoint — reachable when the
+/// configured one is filtered, and the natural answer when the machine sits
+/// behind Cloudflare WARP. The body is capped (an IP is tiny) and only a clean
+/// IP literal is accepted. `Err` carries one line per endpoint that failed;
+/// an empty one means no HTTP client could be built (already logged).
+pub async fn fetch_public_ip(cfg: &Config) -> Result<IpAddr, Vec<String>> {
+    let http = match reqwest::Client::builder()
+        .user_agent(crate::util::USER_AGENT)
+        .timeout(std::time::Duration::from_secs(10))
+        .no_proxy()
+        .build()
+    {
+        Ok(http) => http,
+        Err(e) => {
+            crate::errlog::log("public-ip", format!("could not build an HTTP client: {e}"));
+            return Err(Vec::new());
+        }
+    };
+    let mut errors: Vec<String> = Vec::new();
+    for url in [
+        cfg.public_ip_url.trim(),
+        "https://one.one.one.one/cdn-cgi/trace",
+    ] {
+        match crate::util::fetch_text_capped(&http, url, 4096).await {
+            Ok(text) => match parse_public_ip(&text) {
+                Some(addr) => return Ok(addr),
+                None => errors.push(format!("{url}: no address in the answer")),
+            },
+            Err(e) => errors.push(format!("{url}: {e}")),
+        }
+    }
+    Err(errors)
 }
 
 /// One readable sentence out of the per-URL fetch errors, for the analysis

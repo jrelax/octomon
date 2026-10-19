@@ -391,6 +391,7 @@ async fn main() -> Result<()> {
         s.samples_per_sec = 1000.0 / cfg.ping_interval_ms.max(1) as f64;
         s.graph_marker = cfg.marker();
         s.bar_set = cfg.bar_set();
+        s.tp_interval_ms = cfg.sample_interval_ms;
         s.bits_units = cfg.bits_units();
         s.speedtest_provider_names = provider_names;
         s.speedtest_provider_idx = sel;
@@ -544,6 +545,7 @@ async fn main() -> Result<()> {
         state.clone(),
         cfg.clone(),
         network_changed.clone(),
+        !(cli.check || cli.doctor),
     ));
     tokio::spawn(collectors::resolve::run(
         state.clone(),
@@ -860,6 +862,7 @@ async fn run_ui(
         if s.should_quit {
             break;
         }
+        s.surface_pending_update();
         if !s.paused {
             frozen = None;
             match disguise.as_mut() {
@@ -1294,6 +1297,16 @@ fn handle_key(ctx: &Ctx, key: KeyEvent) {
         if s.overlay == Overlay::Explainer && s.input_mode == InputMode::Normal {
             s.overlay = Overlay::None;
             tokio::task::spawn_blocking(Config::persist_explainer_seen);
+            if !matches!(key.code, KeyCode::Char('q')) && !(ctrl && key.code == KeyCode::Char('c'))
+            {
+                return;
+            }
+        }
+
+        // The update notice: any key, swallowed likewise. It returns at the
+        // next start for as long as the newer version is out there.
+        if s.overlay == Overlay::Update && s.input_mode == InputMode::Normal {
+            s.overlay = Overlay::None;
             if !matches!(key.code, KeyCode::Char('q')) && !(ctrl && key.code == KeyCode::Char('c'))
             {
                 return;

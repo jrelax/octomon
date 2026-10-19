@@ -7,7 +7,7 @@
 //! the current rate alongside. Exits early (marking unsupported) where the
 //! platform has no unprivileged source.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,6 +21,12 @@ const TOP_N: usize = 50;
 /// Bound on remembered aggregates: a long session against a CDN sees a great
 /// many addresses. Past this the smallest idle entries are dropped.
 const MAX_AGG: usize = 2000;
+/// The sampling tick. Public: the UI stretches each per-row history sample
+/// over this many milliseconds of the interface graph.
+pub const TICK_MS: u64 = 2000;
+/// Per-row rate samples kept: five minutes at the tick, matching the
+/// interface graph's 300 one-second samples.
+const HIST_TICKS: usize = 150;
 
 /// Traffic that never touched the wire is not bandwidth: loopback and the
 /// unspecified address (a socket bound but not yet connected).
@@ -39,6 +45,10 @@ struct ProcAgg {
     d_in: u64,
     d_out: u64,
     d_retx: u64,
+    /// Bytes/sec per tick, oldest first, capped at `HIST_TICKS`. Pushed for
+    /// every aggregate every tick (zero when idle) so the tails line up.
+    down_hist: VecDeque<u64>,
+    up_hist: VecDeque<u64>,
 }
 
 /// One remote address's session so far, and by whom.
@@ -52,6 +62,9 @@ struct RemoteAgg {
     procs: HashMap<String, u64>,
     d_in: u64,
     d_out: u64,
+    /// As on `ProcAgg`.
+    down_hist: VecDeque<u64>,
+    up_hist: VecDeque<u64>,
 }
 
 fn busiest<K: Clone>(m: &HashMap<K, u64>) -> Option<K> {
@@ -82,10 +95,20 @@ fn rank_processes(
             down_bps: a.d_in as f64 / secs,
             up_bps: a.d_out as f64 / secs,
             retx_per_sec: a.d_retx as f64 / secs,
+            down_hist: Vec::new(),
+            up_hist: Vec::new(),
         })
         .collect();
     list.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes).then(a.pid.cmp(&b.pid)));
     list.truncate(TOP_N);
+    // Only the published rows carry their history: it is the one per-row
+    // field worth copying, and the '/' filter can only ever match these rows.
+    for r in &mut list {
+        if let Some(a) = agg.get(&r.pid) {
+            r.down_hist = a.down_hist.iter().copied().collect();
+            r.up_hist = a.up_hist.iter().copied().collect();
+        }
+    }
     list
 }
 
@@ -109,11 +132,45 @@ fn rank_remotes(agg: &HashMap<IpAddr, RemoteAgg>, secs: f64) -> Vec<RemoteBandwi
             },
             down_bps: a.d_in as f64 / secs,
             up_bps: a.d_out as f64 / secs,
+            down_hist: Vec::new(),
+            up_hist: Vec::new(),
         })
         .collect();
     list.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes).then(a.addr.cmp(&b.addr)));
     list.truncate(TOP_N);
+    for r in &mut list {
+        if let Some(a) = agg.get(&r.addr) {
+            r.down_hist = a.down_hist.iter().copied().collect();
+            r.up_hist = a.up_hist.iter().copied().collect();
+        }
+    }
     list
+}
+
+/// Close the interval: every aggregate records this tick's rate, idle ones a
+/// zero, so a row's history has one slot per tick however quiet it was and
+/// the UI can line rows up by their newest sample.
+fn advance_histories(
+    procs: &mut HashMap<u32, ProcAgg>,
+    remotes: &mut HashMap<IpAddr, RemoteAgg>,
+    secs: f64,
+) {
+    let rate = |bytes: u64| (bytes as f64 / secs) as u64;
+    for a in procs.values_mut() {
+        push_capped(&mut a.down_hist, rate(a.d_in));
+        push_capped(&mut a.up_hist, rate(a.d_out));
+    }
+    for a in remotes.values_mut() {
+        push_capped(&mut a.down_hist, rate(a.d_in));
+        push_capped(&mut a.up_hist, rate(a.d_out));
+    }
+}
+
+fn push_capped(h: &mut VecDeque<u64>, v: u64) {
+    if h.len() >= HIST_TICKS {
+        h.pop_front();
+    }
+    h.push_back(v);
 }
 
 /// Keep the aggregate maps bounded: once past `MAX_AGG`, drop the smallest
@@ -221,7 +278,7 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
     // False until a baseline exists, so the first sample only records counters
     // rather than attributing their history to one interval.
     let mut primed = false;
-    let mut ticker = tokio::time::interval(Duration::from_secs(2));
+    let mut ticker = tokio::time::interval(Duration::from_millis(TICK_MS));
 
     loop {
         ticker.tick().await;
@@ -304,6 +361,7 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
                 *r.procs.entry(name).or_default() += d_in + d_out;
             }
         }
+        advance_histories(&mut procs, &mut remotes, secs);
         prune(&mut procs, |a| a.down + a.up, |a| a.d_in + a.d_out == 0);
         prune(&mut remotes, |a| a.down + a.up, |a| a.d_in + a.d_out == 0);
 
@@ -334,6 +392,7 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
         st.processes = proc_list;
         st.remote_sel = st.remote_sel.min(remote_list.len().saturating_sub(1));
         st.remotes = remote_list;
+        st.procs_sampled_at = Some(now);
     }
 }
 
@@ -365,6 +424,7 @@ mod tests {
         b.d_in = 2000;
         b.ports.insert(22, 300);
         b.procs.insert("ssh".into(), 300);
+        b.down_hist.extend([0, 1000]);
 
         let list = rank_remotes(&agg, 2.0);
         assert_eq!(list.len(), 2);
@@ -378,6 +438,12 @@ mod tests {
         assert_eq!(list[1].addr, ip(2));
         assert_eq!(list[1].ports, 1);
         assert!((list[1].down_bps - 1000.0).abs() < 1e-9);
+        assert_eq!(
+            list[1].down_hist,
+            vec![0, 1000],
+            "history rides along, oldest first"
+        );
+        assert!(list[0].down_hist.is_empty());
     }
 
     #[test]
@@ -404,6 +470,8 @@ mod tests {
                 d_in: 500,
                 d_out: 20,
                 d_retx: 2,
+                down_hist: VecDeque::from([100, 250]),
+                up_hist: VecDeque::from([0, 10]),
                 ..Default::default()
             },
         );
@@ -418,6 +486,48 @@ mod tests {
         assert!((list[1].down_bps - 250.0).abs() < 1e-9);
         assert!((list[1].retx_per_sec - 1.0).abs() < 1e-9);
         assert!((list[1].share - 1_100.0 / 10_200.0).abs() < 1e-9);
+        assert_eq!(
+            (list[1].down_hist.as_slice(), list[1].up_hist.as_slice()),
+            (&[100, 250][..], &[0, 10][..])
+        );
+    }
+
+    /// Every aggregate gets one history slot per tick, busy or not, so the
+    /// UI can align rows by their newest sample; the ring stays bounded.
+    #[test]
+    fn histories_advance_for_idle_rows_and_cap() {
+        let mut procs: HashMap<u32, ProcAgg> = HashMap::new();
+        procs.insert(
+            1,
+            ProcAgg {
+                d_in: 900,
+                d_out: 100,
+                ..Default::default()
+            },
+        );
+        procs.insert(2, ProcAgg::default());
+        let mut remotes: HashMap<IpAddr, RemoteAgg> = HashMap::new();
+        remotes.insert(
+            ip(1),
+            RemoteAgg {
+                d_in: 900,
+                ..Default::default()
+            },
+        );
+        for _ in 0..HIST_TICKS + 5 {
+            advance_histories(&mut procs, &mut remotes, 2.0);
+        }
+        let busy = &procs[&1];
+        assert_eq!(busy.down_hist.len(), HIST_TICKS, "capped");
+        assert_eq!(
+            (busy.down_hist.back(), busy.up_hist.back()),
+            (Some(&450), Some(&50)),
+            "bytes / secs"
+        );
+        let idle = &procs[&2];
+        assert_eq!(idle.down_hist.len(), HIST_TICKS, "idle rows keep step");
+        assert!(idle.down_hist.iter().all(|&v| v == 0));
+        assert_eq!(remotes[&ip(1)].down_hist.back(), Some(&450));
     }
 
     #[test]

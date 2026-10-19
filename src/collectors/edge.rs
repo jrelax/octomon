@@ -19,7 +19,14 @@ use crate::config::Config;
 /// octomon running).
 const REFRESH: Duration = Duration::from_secs(15 * 60);
 
-pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config, changed: Arc<Notify>) {
+/// `interactive` is false for `--check` / `--doctor`, which have no screen
+/// for the update notice to open on.
+pub async fn run(
+    state: Arc<Mutex<AppState>>,
+    cfg: Config,
+    changed: Arc<Notify>,
+    interactive: bool,
+) {
     let url = cfg.edge_check_url.trim().to_string();
     if url.is_empty() {
         return;
@@ -60,21 +67,10 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config, changed: Arc<Notify>)
         if let Some((info, latest)) = fetch(&client, &with_reason(&url, why)).await {
             let mut s = state.lock().unwrap();
             s.edge = Some(info);
-            // A newer release exists: say so once per version, on the
-            // timeline where it keeps. Mentioning is the whole feature —
-            // octomon never updates itself.
-            if newer_than(&latest, env!("CARGO_PKG_VERSION"))
-                && s.update_available.as_deref() != Some(latest.as_str())
-            {
-                s.push_event(
-                    crate::verdict::Severity::Info,
-                    crate::app::EventCategory::Logging,
-                    format!(
-                        "octomon v{latest} is available (you run v{}) — github.com/securitypedant/octomon/releases",
-                        env!("CARGO_PKG_VERSION")
-                    ),
-                );
-                s.update_available = Some(latest);
+            // A newer release exists: the startup check raises the notice,
+            // a later one only writes the timeline (see `announce_update`).
+            if newer_than(&latest, env!("CARGO_PKG_VERSION")) {
+                s.announce_update(latest, interactive && why == "start");
             }
         }
         let v6_applicable = cfg.probe_ipv6

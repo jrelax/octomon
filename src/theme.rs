@@ -84,6 +84,27 @@ pub fn jitter() -> Color {
     }
 }
 
+/// The interface total behind a filtered download trace: the hue of
+/// `Color::Green`, stepped down so the filtered rows read as the subject.
+/// Explicit colours rather than `Modifier::DIM`, which conhost and a few
+/// emulators ignore.
+pub fn down_dim() -> Color {
+    if is_light() {
+        Color::Indexed(157)
+    } else {
+        Color::Indexed(22)
+    }
+}
+
+/// The same for upload, against `Color::Magenta`.
+pub fn up_dim() -> Color {
+    if is_light() {
+        Color::Indexed(225)
+    } else {
+        Color::Indexed(53)
+    }
+}
+
 /// Cursor-row background (the blue-grey wash).
 pub fn sel_bg() -> Color {
     if is_light() {

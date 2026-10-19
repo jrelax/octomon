@@ -319,7 +319,7 @@
     }
   },
   "image": "https://octomon.dev/blog/technical-paper/card.png",
-  "wordCount": 12968,
+  "wordCount": 13201,
   "inLanguage": "en-GB",
   "isPartOf": {
     "@type": "Blog",
@@ -374,7 +374,7 @@
   <div class="pagehead">
     <div class="wrap">
       <h1>octomon technical paper</h1>
-      <p class="postmeta"><time datetime="2026-10-16">16 October 2026</time> · 59 min read</p>
+      <p class="postmeta"><time datetime="2026-10-16">16 October 2026</time> · 60 min read</p>
       <p class="lede">Documenting the ins and outs of how octomon works, and why</p>
     </div>
   </div>
@@ -440,7 +440,7 @@
         continuously from then on, not only when someone runs a traceroute, which
         is what lets the analysis say &quot;ISP&quot; rather than &quot;somewhere out there&quot;.</li>
         <li><strong>IPv6 twins.</strong> When the link has a global IPv6 address, each built-in target, the gateway and each hop gets a second row marked &quot;v6&quot;, probed over IPv6. The two families are judged apart.</li>
-        <li><strong>Your public IP</strong>, discovered at startup.</li>
+        <li><strong>Your public IP</strong>, discovered at startup, on a network change, and again whenever a monitored path changes.</li>
         <li><strong>Anything you add</strong> by address or name: a game server, a company network device.
         These are judged one at a time and never vote on the Internet as a whole.</li>
         </ul>
@@ -564,7 +564,12 @@
         target row, computed by the same code, so the columns mean the same thing
         in both tables. The path is walked again every 60 seconds to pick up route
         changes, and a hop whose address has not changed keeps its history across
-        the re-walk.</p>
+        the re-walk. When the re-walk finds the route changed, the events timeline
+        says what moved: which hop now answers from a different router, which hop
+        joined, and where the destination sits. A hop that merely stops answering
+        traceroute for one walk is not counted as a change, because routers
+        rate-limit their replies. The public IP is fetched again at that moment,
+        since a new path often means a new egress.</p>
         <figure>
           <img src="monitorspark.png" alt="One row of the path monitor: a hop at 172.68.188.120 with last 57.2ms, avg 30.9ms, p95 88.3ms, max 132.4ms, jitter 37.2 and loss 3%, and to its right a sparkline of mostly short green bars with a few taller yellow ones and a single full-height red bar near the end">
         </figure>
@@ -624,6 +629,14 @@
         and onto the remote address. The tables show session totals with the
         current rate beside them, so a process that moved a gigabyte ten minutes
         ago still ranks above one trickling now.</p>
+        <p>Each published row also keeps five minutes of its own rate, one sample per
+        two-second tick. Under the <code>/</code> filter the two graphs become stacked: the
+        filtered rows&#39; summed rate drawn bright from the baseline, the rest of the
+        interface total dim above it. The two series come from different clocks and
+        different counters, so each talkers sample is placed on the graph by the
+        time it covered rather than by position, and a filtered sum can exceed the
+        interface total in a column, because loopback bytes count against a process
+        but never cross the wire.</p>
         <p>Code: <a href="https://github.com/securitypedant/octomon/blob/main/src/collectors/procbw.rs"><code>procbw.rs</code></a>, <a href="https://github.com/securitypedant/octomon/blob/main/src/platform/mod.rs"><code>mod.rs</code></a>, <a href="https://github.com/securitypedant/octomon/blob/main/src/platform/etw.rs"><code>etw.rs</code></a>.</p>
         <figure>
           <img src="speedtest.png" alt="The octomon Bandwidth panel for en0 during a speed test. A magenta progress bar across the top reads speedtest, Cloudflare, upload 68%, 714 Mb/s, filled about two thirds of the way. The green download graph shows a burst that has just finished, with the label at 795 KB/s, 6.4 Mb/s, and the magenta upload graph shows a tall block climbing at the right edge, labelled 78.3 MB/s, 626.3 Mb/s">
@@ -1223,7 +1236,10 @@
         carry the number only; if the v6 answer names the same AS, that name is
         used. If the address the edge saw is
         not the public IP octomon fetched, the row says so and goes amber which indicates 
-        the two requests left by different paths.</li>
+        the two requests left by different paths. The same answer carries the
+        latest released version. At startup a newer one is shown in a notice that
+        any key dismisses; found later, it only goes on the timeline. octomon never
+        updates itself.</li>
         <li><strong>public IP</strong>: The public v4 and v6 addresses octomon fetched.</li>
         <li><strong>nat</strong>: How many layers of NAT sit between this machine and the
         Internet. If the gateway has a private address and hop 2 is also
@@ -1525,6 +1541,7 @@
         <p>This is a living document. Every change to it after first publication gets
         a line here, newest first, so you can see what moved and when.</p>
         <ul>
+        <li><strong>2026-10-18</strong> · Reviewed against octomon 0.11.6: path-change events and public IP re-fetch (§2.1), the stacked filtered bandwidth graph (§2.2), the version notice (§4.9).</li>
         <li><strong>2026-10-16</strong> · First publication, written against octomon 0.11.4.</li>
         </ul>
       </article>
