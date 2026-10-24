@@ -32,6 +32,9 @@ pub fn start(state: Arc<Mutex<AppState>>, addr: IpAddr, label: String) {
             .args(tr::args(MAX_HOPS, &addr.to_string()))
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            // A walk abandoned early (Esc, a new target) must take its
+            // process with it rather than leave it running to the end.
+            .kill_on_drop(true)
             .spawn();
 
         let mut child = match child {

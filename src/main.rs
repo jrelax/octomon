@@ -334,6 +334,26 @@ async fn main() -> Result<()> {
     if cli.alert {
         cfg.alert.desktop = true;
     }
+    // An elevated run reads the invoking user's config.toml when `sudo` keeps
+    // `$HOME` (macOS does by default). A `[alert] command` from a file root
+    // does not own would then run as root on the first finding — a shell for
+    // anything that can write to that user's config. The file's command is
+    // dropped in that case; `--alert-cmd` on root's own command line stands.
+    #[cfg(unix)]
+    if cfg.alert.command.is_some() && platform::tools::is_privileged() {
+        use std::os::unix::fs::MetadataExt as _;
+        let file = cli.config.clone().or_else(Config::path);
+        let root_owned = file
+            .as_deref()
+            .and_then(|p| std::fs::symlink_metadata(p).ok())
+            .is_some_and(|m| m.uid() == 0 && !m.file_type().is_symlink());
+        if !root_owned {
+            let msg = "running elevated: the [alert] command in a config file root does not own is ignored — pass --alert-cmd to run one";
+            eprintln!("octomon: {msg}");
+            errlog::log("alert", msg);
+            cfg.alert.command = None;
+        }
+    }
     if let Some(cmd) = &cli.alert_cmd {
         cfg.alert.command = Some(cmd.clone());
     }
@@ -786,7 +806,9 @@ async fn watch(state: &Arc<Mutex<AppState>>, cfg: &config::Config) -> Result<()>
                 match &s.verdict.current {
                     verdict::Verdict::Insufficient(_) => None,
                     verdict::Verdict::Healthy => Some("● connection healthy".to_string()),
-                    verdict::Verdict::Problems(f) => Some(format!("▲ {}", f[0].summary)),
+                    verdict::Verdict::Problems(f) => {
+                        Some(util::strip_control(&format!("▲ {}", f[0].summary)))
+                    }
                 }
             };
             if let Some(line) = line {
@@ -2990,16 +3012,11 @@ fn print_snapshot(s: &AppState) {
     print!("{}", strip_control(snapshot_text(s)));
 }
 
-/// Drop control characters (other than newline) so an SSID, interface or
-/// process name from the environment cannot inject terminal escapes into
-/// stdout. The TUI is already protected — ratatui skips control characters
-/// when it fills a cell — so this covers only the non-TUI paths, whose output
-/// is printed raw and meant to be pasted elsewhere. `--json` needs nothing:
-/// serde escapes them.
+/// See [`util::strip_control`]: the non-TUI outputs are printed raw and meant
+/// to be pasted elsewhere, so nothing from the environment may steer the
+/// terminal they land on.
 fn strip_control(text: String) -> String {
-    text.chars()
-        .filter(|c| *c == '\n' || !c.is_control())
-        .collect()
+    util::strip_control(&text)
 }
 
 /// The measurement report as a string, so `--doctor` can embed and redact it.

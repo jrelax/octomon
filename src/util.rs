@@ -133,8 +133,33 @@ pub async fn drain_capped(resp: reqwest::Response, max_bytes: usize) {
     }
 }
 
+/// Drop characters that could steer a terminal rather than be read on one:
+/// control characters (other than newline), and the Unicode bidi overrides and
+/// isolates that make text render in a different order than it is stored. An
+/// SSID, interface or process name is chosen by someone else and reaches
+/// stdout in `--check`, `--doctor` and every `--watch` line, which are printed
+/// raw and meant to be pasted elsewhere. The TUI is already protected —
+/// ratatui skips control characters when it fills a cell. `--json` needs
+/// nothing: serde escapes them.
+pub fn strip_control(text: &str) -> String {
+    text.chars()
+        .filter(|c| *c == '\n' || !(c.is_control() || is_bidi_control(*c)))
+        .collect()
+}
+
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strip_control_keeps_newlines_drops_escapes_and_bidi() {
+        let hostile = "cafe\x1b]0;pwned\x07\u{202E}evil\nnext";
+        assert_eq!(super::strip_control(hostile), "cafe]0;pwnedevil\nnext");
+        assert_eq!(super::strip_control("plain ☕ text"), "plain ☕ text");
+    }
+
     #[test]
     fn minutes_read_like_time_not_arithmetic() {
         use super::fmt_minutes;

@@ -606,7 +606,7 @@ impl Config {
         match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str::<Config>(&text)
                 .map(Config::migrated)
-                .map_err(|e| format!("{}: {e}", path.display())),
+                .map_err(|e| format!("{}: {}", path.display(), e.message())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let cfg = Config::default();
                 cfg.write_to(path)
@@ -624,12 +624,16 @@ impl Config {
                 Err(e) => {
                     tracing::warn!("failed to parse {}: {e}; using defaults", path.display());
                     // Every setting silently reverting is a big, invisible
-                    // change; a typo in the file is the usual cause.
+                    // change; a typo in the file is the usual cause. The
+                    // message alone, not toml's quoted source line: the line
+                    // at fault may be the webhook URL, and errors.log is
+                    // echoed into the doctor report.
                     crate::errlog::log(
                         "config",
                         format!(
-                            "{} did not parse: {e} — running on defaults",
-                            path.display()
+                            "{} did not parse: {} — running on defaults",
+                            path.display(),
+                            e.message()
                         ),
                     );
                     Config::default()
@@ -710,10 +714,34 @@ impl Config {
             crate::errlog::log("config", "no config directory — setting not saved");
             return;
         };
-        let mut cfg = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| toml::from_str::<Config>(&t).ok())
-            .unwrap_or_default();
+        // A file that exists but will not parse is left exactly as it is: the
+        // session is running on defaults (logged at startup), and writing
+        // those defaults back would turn one typo into every hand-made
+        // setting gone. A missing file starts from defaults as before.
+        let mut cfg = match std::fs::read_to_string(&path) {
+            Ok(text) => match toml::from_str::<Config>(&text) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    crate::errlog::log(
+                        "config",
+                        format!(
+                            "{} did not parse: {} — setting not saved, file left untouched",
+                            path.display(),
+                            e.message()
+                        ),
+                    );
+                    return;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(e) => {
+                crate::errlog::log(
+                    "config",
+                    format!("could not read {}: {e} — setting not saved", path.display()),
+                );
+                return;
+            }
+        };
         mutate(&mut cfg);
         if let Err(e) = cfg.write_to(&path) {
             crate::errlog::log(
@@ -728,7 +756,14 @@ impl Config {
 
     fn write_to(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
-            crate::store::create_dir_private(dir)?;
+            // Only octomon's own directory is made owner-only. The parent of
+            // a `--config` path is whatever the user named — /etc, a project
+            // directory, /tmp — and must keep its mode.
+            if Self::dir().is_some_and(|own| own == dir) {
+                crate::store::create_dir_private(dir)?;
+            } else if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)?;
+            }
         }
         let body = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
         let header = "# octomon configuration — edit and restart octomon.\n\

@@ -131,8 +131,15 @@ async fn open() -> Result<(tokio::fs::File, std::path::PathBuf), String> {
     let mut opts = tokio::fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    // tokio's OpenOptions carries its own `mode`, so no std trait import here.
-    opts.mode(crate::store::FILE_MODE);
+    {
+        // tokio's OpenOptions carries its own `mode`, so no std trait import here.
+        opts.mode(crate::store::FILE_MODE);
+        // Same rule as `store::private_options`: elevated, never create a
+        // recording through a symlink planted in the invoking user's data dir.
+        if crate::platform::tools::is_privileged() {
+            opts.custom_flags(libc::O_NOFOLLOW);
+        }
+    }
     let mut f = opts.open(&path).await.map_err(|e| e.to_string())?;
     f.write_all(HEADER.as_bytes())
         .await

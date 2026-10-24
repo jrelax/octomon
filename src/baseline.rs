@@ -342,15 +342,42 @@ fn path() -> Option<std::path::PathBuf> {
     crate::store::data_dir().map(|d| d.join("baselines.json"))
 }
 
-/// Best-effort load; a corrupt or missing file is an empty map, never a crash.
+/// Best-effort load; a missing file is an empty map, never a crash. A file
+/// that is there but will not parse is moved aside to `baselines.json.corrupt`
+/// and logged, rather than read as empty: the next `save` would otherwise
+/// rewrite the file with only the current network, and every other learned
+/// normal would be gone for good over one bad byte. Moved aside, it can be
+/// repaired by hand.
 pub fn load() -> Store {
     let Some(p) = path() else {
         return Store::new();
     };
-    std::fs::read_to_string(p)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(_) => return Store::new(),
+    };
+    match serde_json::from_str(&text) {
+        Ok(store) => store,
+        Err(e) => {
+            let aside = p.with_extension("json.corrupt");
+            let moved = std::fs::rename(&p, &aside);
+            crate::errlog::log(
+                "baseline",
+                match moved {
+                    Ok(()) => format!(
+                        "{} did not parse: {e} — moved to {} and starting over",
+                        p.display(),
+                        aside.display()
+                    ),
+                    Err(m) => format!(
+                        "{} did not parse: {e} — could not move it aside ({m}); learned networks not saved",
+                        p.display()
+                    ),
+                },
+            );
+            Store::new()
+        }
+    }
 }
 
 /// Best-effort whole-file rewrite — a handful of networks × ~200 bytes.
@@ -361,6 +388,20 @@ pub fn save(store: &Store) {
         crate::errlog::log("baseline", "no data directory — learned networks not saved");
         return;
     };
+    // If `load` could not move a corrupt file aside, it is still there and
+    // still somebody's history: do not write over it.
+    if let Ok(text) = std::fs::read_to_string(&p)
+        && serde_json::from_str::<Store>(&text).is_err()
+    {
+        crate::errlog::log(
+            "baseline",
+            format!(
+                "{} is unreadable and still in place — not overwriting it",
+                p.display()
+            ),
+        );
+        return;
+    }
     if let Some(dir) = p.parent() {
         let _ = crate::store::create_dir_private(dir);
     }

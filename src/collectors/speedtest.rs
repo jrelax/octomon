@@ -132,6 +132,9 @@ pub async fn run(state: Arc<Mutex<AppState>>, trigger: Arc<Notify>) {
         .user_agent(crate::util::USER_AGENT)
         .pool_max_idle_per_host(STREAMS)
         .timeout(Duration::from_secs(30))
+        // Direct: a speed test through a shell `https_proxy` measures the
+        // proxy, not the line.
+        .no_proxy()
         .build()
     {
         Ok(c) => c,

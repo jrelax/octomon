@@ -273,6 +273,8 @@ async fn discover(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // A walk superseded mid-way returns early; the process goes with it.
+        .kill_on_drop(true)
         .spawn();
 
     let mut child = match child {

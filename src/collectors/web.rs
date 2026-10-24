@@ -94,6 +94,10 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(4))
+        // Direct: through a shell `https_proxy` this would time the proxy's
+        // CONNECT, and with certificate checking off, count whatever the
+        // proxy answers as the target being up.
+        .no_proxy()
         .build()
     {
         Ok(c) => c,

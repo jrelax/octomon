@@ -12,3 +12,7 @@
 # Local deploy helper: the Cloudflare account id for octomon.dev, so wrangler
 # can pick the right account non-interactively. Deliberately not committed.
 /.env
+
+# Local agent scratch (Claude Code etc.)
+/.agents/
+/skills-lock.json

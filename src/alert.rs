@@ -115,7 +115,11 @@ impl Alert {
         if let Some(net) = &self.network {
             s.push_str(&format!(" · on {net}"));
         }
-        s
+        // The network name is the SSID when the location has no name of its
+        // own, and an access point can call itself anything — including a
+        // terminal escape sequence. This line is printed raw by --watch and
+        // handed to the desktop notifier, so it is cleaned here, once.
+        crate::util::strip_control(&s)
     }
 
     fn event(&self) -> &'static str {
@@ -388,9 +392,12 @@ fn run_command(command: &str, alert: &Alert) {
 /// POST the payload as JSON. One attempt, short timeout: a webhook that is
 /// down is not worth retrying into a queue nobody drains.
 async fn post_webhook(url: &str, alert: &Alert) {
+    // Direct, like every other client: a shell `https_proxy` must not
+    // silently reroute where alerts go.
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(crate::util::USER_AGENT)
+        .no_proxy()
         .build()
     {
         Ok(c) => c,
@@ -399,6 +406,13 @@ async fn post_webhook(url: &str, alert: &Alert) {
             return;
         }
     };
+    // Only the host goes on the record. A Slack, Discord or Teams hook URL is
+    // the credential — and errors.log is echoed into the doctor report and
+    // the bundle, which are meant to be pasted and attached.
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "webhook".to_string());
     // Built by hand rather than with reqwest's json feature, which this
     // build does not carry.
     match client
@@ -409,9 +423,12 @@ async fn post_webhook(url: &str, alert: &Alert) {
         .await
     {
         Ok(r) if !r.status().is_success() => {
-            crate::errlog::log("alert", format!("webhook {url} answered {}", r.status()))
+            crate::errlog::log("alert", format!("webhook {host} answered {}", r.status()))
         }
-        Err(e) => crate::errlog::log("alert", format!("webhook {url}: {e}")),
+        Err(e) => crate::errlog::log(
+            "alert",
+            format!("webhook {host}: {}", crate::util::describe_error(&e)),
+        ),
         _ => {}
     }
 }

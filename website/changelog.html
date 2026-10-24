@@ -365,8 +365,18 @@
       "url": "https://octomon.dev/images/octomon-icon-tile.png"
     }
   },
-  "dateModified": "2026-10-18",
+  "dateModified": "2026-10-24",
   "hasPart": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "octomon",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "softwareVersion": "0.11.7",
+      "datePublished": "2026-10-24",
+      "releaseNotes": "https://octomon.dev/changelog#v0.11.7",
+      "url": "https://github.com/securitypedant/octomon/releases/tag/v0.11.7"
+    },
     {
       "@type": "SoftwareApplication",
       "name": "octomon",
@@ -891,7 +901,7 @@
         binaries for macOS, Linux and Windows.</p>
       </div>
       <ul class="versions">
-        <li class="vgroup"><span class="vlabel">0.11</span><a href="#v0.11.6">0.11.6</a><a href="#v0.11.5">0.11.5</a><a href="#v0.11.4">0.11.4</a><a href="#v0.11.3">0.11.3</a><a href="#v0.11.2">0.11.2</a><a href="#v0.11.1">0.11.1</a><a href="#v0.11.0">0.11.0</a></li>
+        <li class="vgroup"><span class="vlabel">0.11</span><a href="#v0.11.7">0.11.7</a><a href="#v0.11.6">0.11.6</a><a href="#v0.11.5">0.11.5</a><a href="#v0.11.4">0.11.4</a><a href="#v0.11.3">0.11.3</a><a href="#v0.11.2">0.11.2</a><a href="#v0.11.1">0.11.1</a><a href="#v0.11.0">0.11.0</a></li>
         <li class="vgroup"><span class="vlabel">0.10</span><a href="#v0.10.1">0.10.1</a><a href="#v0.10.0">0.10.0</a></li>
         <li class="vgroup"><span class="vlabel">0.9</span><a href="#v0.9.8">0.9.8</a><a href="#v0.9.7">0.9.7</a><a href="#v0.9.6">0.9.6</a><a href="#v0.9.5">0.9.5</a><a href="#v0.9.4">0.9.4</a><a href="#v0.9.3">0.9.3</a><a href="#v0.9.2">0.9.2</a><a href="#v0.9.1">0.9.1</a><a href="#v0.9.0">0.9.0</a></li>
         <li class="vgroup"><span class="vlabel">0.8</span><a href="#v0.8.2">0.8.2</a><a href="#v0.8.1">0.8.1</a><a href="#v0.8.0">0.8.0</a></li>
@@ -909,6 +919,23 @@
   <section>
     <div class="wrap">
       <div class="post">
+
+        <article class="release" id="v0.11.7">
+          <h2><a href="#v0.11.7">0.11.7</a></h2>
+          <p class="relmeta"><time datetime="2026-10-24">24 October 2026</time> · <a href="https://github.com/securitypedant/octomon/releases/tag/v0.11.7">release on GitHub</a></p>
+          <p class="relsummary">A security release reviewing the whole codebase using Cloudflare&#39;s <a href="https://github.com/cloudflare/security-audit-skill">security audit skill</a>. No changes to what octomon measures; it changes what it does with files, with input text, and when it runs as root.</p>
+          <ul>
+          <li>Dependencies: rustls-webpki 0.103.16 and webpki-roots 1.0.11, for RUSTSEC-2026-0381 and 0382 (published this week): the previous versions could accept a certificate chain through an intermediate that has <a href="https://blog.cloudflare.com/emudhra-certificate-compromise/">since been distrusted</a>. Every HTTPS check octomon makes goes through this code, so this is the reason for the release. Also tokio 1.53.3, which closes the unsound-API advisory RUSTSEC-2026-0386 (an API octomon does not call), plus serde_json 1.0.154 and zip 9.0.4.</li>
+          <li><code>--config</code> with a path whose file does not exist yet no longer makes the file&#39;s directory owner-only. Before, <code>sudo octomon --config /etc/octomon.toml</code> on a first run would have set <code>/etc</code> to mode 0700.</li>
+          <li>Run as root with the invoking user&#39;s home directory (what <code>sudo</code> does by default on macOS), octomon no longer follows symlinks when it writes or re-permissions files in its config and data directories, and ignores an <code>[alert] command</code> from a config file root does not own. A link or a line in a user&#39;s home could otherwise have had root act on it. <code>--alert-cmd</code> on the command line still runs.</li>
+          <li>The alert webhook URL no longer appears in the errors.log when a delivery fails; only its host does. Error log lines are echoed into the <code>--doctor</code> report and the support bundle, and a Slack or Discord hook URL is the credential. A config.toml that does not parse is likewise logged by message, without quoting the offending line.</li>
+          <li>Every <code>--watch</code> line and alert notification has control characters and bidi overrides removed, as <code>--check</code> and <code>--doctor</code> already did. The network name on an alert is the SSID when the location has no name of its own, and an access point can call itself anything, including a terminal escape sequence.</li>
+          <li>Three HTTPS clients (the per-target web probe, the speed test, and the webhook) now ignore a shell <code>https_proxy</code>, as the rest already did. Through a proxy the web probe timed the proxy&#39;s CONNECT rather than the target, and the speed test measured the proxy.</li>
+          <li><code>--demo</code> disguises the network name stored with each past speed test. The Bandwidth panel showed the real SSID there while hiding it everywhere else.</li>
+          <li>A config.toml with a syntax error is left alone. Before, octomon ran on defaults (as logged) and the next change made from the keyboard ([a], [v], [I], or dismissing the first-run explainer) wrote those defaults back over the file, so a typo cost every hand-made setting. The same for baselines.json: a file that does not parse is moved aside to <code>baselines.json.corrupt</code> instead of being overwritten with only the current network. Both files are now written to a temporary file and renamed into place, so a crash mid-write cannot leave a truncated one.</li>
+          <li>Traceroute, path-monitor, discovery, whois and iperf3 children are killed when octomon stops waiting for them. A traceroute that outlived its timeout used to keep running to its own end.</li>
+          </ul>
+        </article>
 
         <article class="release" id="v0.11.6">
           <h2><a href="#v0.11.6">0.11.6</a></h2>

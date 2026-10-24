@@ -7,6 +7,20 @@ Every release since the first one, newest first. Each version is also a
 [GitHub release](https://github.com/securitypedant/octomon/releases) with
 binaries for macOS, Linux and Windows.
 
+## 0.11.7 · 2026-10-24
+
+A security release reviewing the whole codebase using Cloudflare's [security audit skill](https://github.com/cloudflare/security-audit-skill). No changes to what octomon measures; it changes what it does with files, with input text, and when it runs as root.
+
+- Dependencies: rustls-webpki 0.103.16 and webpki-roots 1.0.11, for RUSTSEC-2026-0381 and 0382 (published this week): the previous versions could accept a certificate chain through an intermediate that has [since been distrusted](https://blog.cloudflare.com/emudhra-certificate-compromise/). Every HTTPS check octomon makes goes through this code, so this is the reason for the release. Also tokio 1.53.3, which closes the unsound-API advisory RUSTSEC-2026-0386 (an API octomon does not call), plus serde_json 1.0.154 and zip 9.0.4.
+- `--config` with a path whose file does not exist yet no longer makes the file's directory owner-only. Before, `sudo octomon --config /etc/octomon.toml` on a first run would have set `/etc` to mode 0700.
+- Run as root with the invoking user's home directory (what `sudo` does by default on macOS), octomon no longer follows symlinks when it writes or re-permissions files in its config and data directories, and ignores an `[alert] command` from a config file root does not own. A link or a line in a user's home could otherwise have had root act on it. `--alert-cmd` on the command line still runs.
+- The alert webhook URL no longer appears in the errors.log when a delivery fails; only its host does. Error log lines are echoed into the `--doctor` report and the support bundle, and a Slack or Discord hook URL is the credential. A config.toml that does not parse is likewise logged by message, without quoting the offending line.
+- Every `--watch` line and alert notification has control characters and bidi overrides removed, as `--check` and `--doctor` already did. The network name on an alert is the SSID when the location has no name of its own, and an access point can call itself anything, including a terminal escape sequence.
+- Three HTTPS clients (the per-target web probe, the speed test, and the webhook) now ignore a shell `https_proxy`, as the rest already did. Through a proxy the web probe timed the proxy's CONNECT rather than the target, and the speed test measured the proxy.
+- `--demo` disguises the network name stored with each past speed test. The Bandwidth panel showed the real SSID there while hiding it everywhere else.
+- A config.toml with a syntax error is left alone. Before, octomon ran on defaults (as logged) and the next change made from the keyboard ([a], [v], [I], or dismissing the first-run explainer) wrote those defaults back over the file, so a typo cost every hand-made setting. The same for baselines.json: a file that does not parse is moved aside to `baselines.json.corrupt` instead of being overwritten with only the current network. Both files are now written to a temporary file and renamed into place, so a crash mid-write cannot leave a truncated one.
+- Traceroute, path-monitor, discovery, whois and iperf3 children are killed when octomon stops waiting for them. A traceroute that outlived its timeout used to keep running to its own end.
+
 ## 0.11.6 · 2026-10-18
 
 Some minor quality of life improvements. Bandwidth graph now reflects what's being filtered, event entry when the monitored path changes, and a word at startup when a newer octomon is out.

@@ -85,15 +85,35 @@ pub const FILE_MODE: u32 = 0o600;
 #[cfg(unix)]
 pub const DIR_MODE: u32 = 0o700;
 
-/// `create_dir_all`, then make the leaf owner-only.
+/// Whether `path` is a real (non-symlink) file or directory owned by the
+/// effective user. Everything that re-permissions or writes through a path
+/// checks this first, because `chmod` and `open` follow symlinks: run as root
+/// over a home directory that stays the invoking user's (`sudo` on macOS
+/// keeps `$HOME`), a planted `~/.local/share/octomon/x -> /etc/sudoers` would
+/// otherwise have octomon make the target owner-only — or truncate it.
+#[cfg(unix)]
+pub fn owned_by_me(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    // SAFETY: geteuid() takes no arguments, cannot fail, and only reads the
+    // calling process's own credentials.
+    let me = unsafe { libc::geteuid() };
+    std::fs::symlink_metadata(path)
+        .map(|m| !m.file_type().is_symlink() && m.uid() == me)
+        .unwrap_or(false)
+}
+
+/// `create_dir_all`, then make the leaf owner-only — when it is ours. A
+/// directory somebody else owns (their `$XDG_DATA_HOME`, or the user's own
+/// tree seen from a `sudo` run) is not ours to re-permission.
 pub fn create_dir_private(dir: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        // Best-effort: a directory we do not own (someone else's $XDG_DATA_HOME)
-        // is not ours to re-permission, and failing here would cost the write.
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE));
+        // Best-effort: failing here would cost the write.
+        if owned_by_me(dir) {
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(DIR_MODE));
+        }
     }
     Ok(())
 }
@@ -111,19 +131,61 @@ pub fn private_options() -> std::fs::OpenOptions {
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         opts.mode(FILE_MODE);
+        // Elevated, never write through a symlink: the file's directory is
+        // the invoking user's when `sudo` keeps `$HOME`, and a link planted
+        // there would have root truncate or append to whatever it points at.
+        // Unprivileged, a symlinked config.toml in a dotfiles repo is a
+        // legitimate arrangement and keeps working.
+        if crate::platform::tools::is_privileged() {
+            opts.custom_flags(libc::O_NOFOLLOW);
+        }
     }
     opts
 }
 
-/// `std::fs::write`, owner-only.
+/// `std::fs::write`, owner-only and atomic: the contents go to a sibling
+/// temporary file that is renamed over the target, so a crash mid-write leaves
+/// the previous file intact rather than a truncated one — which, for
+/// config.toml and baselines.json, would read as every setting or every
+/// learned network gone at the next start.
 pub fn write_private(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     use std::io::Write as _;
+    // A symlinked target (a config.toml kept in a dotfiles repo) is written
+    // where it points, so the rename does not replace the link with a file.
+    // Elevated, that is exactly the write `private_options` refuses, and for
+    // the same reason.
+    let resolved;
+    let path = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => {
+            if crate::platform::tools::is_privileged() {
+                return Err(std::io::Error::other(
+                    "refusing to write through a symlink while elevated",
+                ));
+            }
+            resolved = std::fs::canonicalize(path)?;
+            resolved.as_path()
+        }
+        _ => path,
+    };
+    let tmp = path.with_file_name(format!(
+        ".{}.tmp",
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "octomon".to_string())
+    ));
     let mut f = private_options()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(path)?;
-    f.write_all(contents.as_ref())
+        .open(&tmp)?;
+    let written = f
+        .write_all(contents.as_ref())
+        .and_then(|()| f.sync_all())
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Re-permission everything octomon has already written. `OpenOptions::mode`
@@ -138,7 +200,10 @@ pub fn tighten_permissions() {
         .into_iter()
         .flatten()
     {
-        if !dir.is_dir() {
+        // Only a directory this user owns, and never through a symlink: an
+        // elevated run over the invoking user's home must not chmod whatever
+        // a planted link points at (see `owned_by_me`).
+        if !dir.is_dir() || !owned_by_me(&dir) {
             continue;
         }
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(DIR_MODE));
@@ -147,7 +212,10 @@ pub fn tighten_permissions() {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() {
+            // `file_type()` from the directory entry does not follow links,
+            // so a symlinked file is skipped rather than its target touched.
+            let regular = entry.file_type().is_ok_and(|t| t.is_file());
+            if regular && owned_by_me(&path) {
                 let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(FILE_MODE));
             }
         }

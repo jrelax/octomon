@@ -42,6 +42,9 @@ pub async fn run(state: Arc<Mutex<AppState>>, clients: ping::Clients, cfg: Confi
     let walk = Command::new(tr::PROGRAM)
         .args(tr::args(MAX_HOPS, &probe))
         .stdin(std::process::Stdio::null())
+        // The timeout below drops the future; without this the traceroute
+        // would carry on detached for its own full run.
+        .kill_on_drop(true)
         .output();
     let out = match tokio::time::timeout(WALK_TIMEOUT, walk).await {
         Ok(Ok(out)) => out,
@@ -336,6 +339,7 @@ async fn walk_v6(
     let walk = Command::new(program)
         .args(tr::args(MAX_HOPS, &dest))
         .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
         .output();
     let out = match tokio::time::timeout(WALK_TIMEOUT, walk).await {
         Ok(Ok(out)) => out,

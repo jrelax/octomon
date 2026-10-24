@@ -392,6 +392,13 @@ pub fn disguise(s: &AppState, d: &mut Disguise) -> AppState {
             b.label = d.ssid_or_text(&b.label);
         }
     }
+    // Speed-test history snapshots the network label at test time — the
+    // SSID, for an unnamed location — and the Bandwidth panel shows it.
+    for r in v.speed_history.iter_mut() {
+        if let Some(n) = r.network.as_mut() {
+            *n = d.ssid_or_text(n);
+        }
+    }
 
     // Free text last, once every mapping exists.
     for e in v.events.iter_mut() {
@@ -690,9 +697,26 @@ mod tests {
             crate::app::EventCategory::Network,
             "known location → SecretNet".into(),
         );
+        // A past speed test remembers the network it ran on, by SSID.
+        s.speed_history.push(crate::store::SpeedRecord {
+            at: 0,
+            provider: "Cloudflare".into(),
+            down_mbps: 100.0,
+            up_mbps: 20.0,
+            idle_ms: None,
+            loaded_ms: None,
+            network: Some("SecretNet".into()),
+            medium: None,
+            server: None,
+        });
 
         let mut d = Disguise::new();
         let v = disguise(&s, &mut d);
+        assert_eq!(
+            v.speed_history[0].network.as_deref(),
+            Some("DemoNet"),
+            "SSID scrubbed from speed-test history"
+        );
 
         // Hidden: MACs, SSID, the public addresses, the global v6.
         assert!(v.netinfo.mac.starts_with("02:"));

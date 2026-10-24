@@ -518,6 +518,9 @@ async fn system_whois(addr: IpAddr) -> Result<Vec<String>, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // On timeout the future is dropped; the whois process must not stay
+        // behind waiting on its own TCP connect.
+        .kill_on_drop(true)
         .output();
     let out = tokio::time::timeout(TIMEOUT, run)
         .await
