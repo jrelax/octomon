@@ -142,7 +142,7 @@ const FOOTER = `<footer>
     <a href="/privacy">privacy</a>
     <a href="${REPO}">github.com/securitypedant/octomon</a>
     <a href="https://crates.io/crates/octomon">crates.io/crates/octomon</a>
-    <a href="https://www.youtube.com/watch?v=sHPd2LeYvaw">intro video</a>
+    <a href="https://www.youtube.com/watch?v=ECwBaSvUwfk">intro video</a>
   </div>
 </footer>`;
 

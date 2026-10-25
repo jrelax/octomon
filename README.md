@@ -13,7 +13,7 @@ whether it's the network, the Wi-Fi, the ISP, or your own machine that's the pro
 
 ![octomon screenshot](https://raw.githubusercontent.com/securitypedant/octomon/main/screenshot.png)
 
-▶️ **[Watch the intro video](https://www.youtube.com/watch?v=sHPd2LeYvaw)** — why octomon exists and a tour of what it does.
+▶️ **[Watch the intro video](https://www.youtube.com/watch?v=ECwBaSvUwfk)** — why octomon exists and a tour of what it does.
 
 ## What it shows
 
