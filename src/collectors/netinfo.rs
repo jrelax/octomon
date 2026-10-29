@@ -756,20 +756,19 @@ fn vendor_from_addrs(v4: &[Ipv4Addr], v6: &[Ipv6Addr]) -> Option<&'static str> {
 /// can be pinned down — the tunnel is still reported, just unnamed, which beats
 /// naming the wrong one.
 fn tunnel_vendor(iface_name: String) -> String {
-    // The live tunnel's own addresses settle it.
-    if let Some(iface) = netdev::get_interfaces()
+    let by_addr = netdev::get_interfaces()
         .into_iter()
         .find(|i| i.name == iface_name)
-    {
-        let v4: Vec<Ipv4Addr> = iface.ipv4.iter().map(|n| n.addr()).collect();
-        let v6: Vec<Ipv6Addr> = iface.ipv6.iter().map(|n| n.addr()).collect();
-        if let Some(display) = vendor_from_addrs(&v4, &v6) {
-            return display.to_string();
-        }
-    }
+        .and_then(|iface| {
+            let v4: Vec<Ipv4Addr> = iface.ipv4.iter().map(|n| n.addr()).collect();
+            let v6: Vec<Ipv6Addr> = iface.ipv6.iter().map(|n| n.addr()).collect();
+            vendor_from_addrs(&v4, &v6)
+        });
+    pick_vendor(by_addr, &running_vpns())
+}
 
-    // Fall back to the process table, but only when it is unambiguous: having
-    // two clients installed and running says nothing about which one is up.
+/// VPN clients with a process running right now.
+fn running_vpns() -> std::collections::BTreeSet<&'static str> {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::All,
@@ -785,15 +784,57 @@ fn tunnel_vendor(iface_name: String) -> String {
             }
         }
     }
-    match hits.len() {
-        1 => hits.iter().next().unwrap().to_string(),
-        _ => String::new(),
+    hits
+}
+
+/// Address ranges overlap (Zscaler also uses Tailscale's 100.64/10), so an
+/// address match only stands when its client runs or no single other client does.
+fn pick_vendor(
+    by_addr: Option<&'static str>,
+    running: &std::collections::BTreeSet<&'static str>,
+) -> String {
+    let sole = if running.len() == 1 {
+        running.first().copied()
+    } else {
+        None
+    };
+    match (by_addr, sole) {
+        (Some(v), _) if running.contains(v) => v,
+        (_, Some(s)) => s,
+        (Some(v), None) => v,
+        (None, None) => "",
     }
+    .to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Ipv4Addr, Ipv6Addr, iface_changes, is_tunnel_name, vendor_from_addrs};
+    use super::{
+        Ipv4Addr, Ipv6Addr, iface_changes, is_tunnel_name, pick_vendor, vendor_from_addrs,
+    };
+
+    /// Zscaler ZPA puts 100.64.0.1 on its utun, inside Tailscale's range.
+    #[test]
+    fn a_shared_cgnat_address_defers_to_the_running_client() {
+        use std::collections::BTreeSet;
+        let addr = vendor_from_addrs(&[Ipv4Addr::new(100, 64, 0, 1)], &[]);
+        assert_eq!(addr, Some("Tailscale"));
+        assert_eq!(pick_vendor(addr, &BTreeSet::from(["Zscaler"])), "Zscaler");
+        assert_eq!(
+            pick_vendor(addr, &BTreeSet::from(["Tailscale"])),
+            "Tailscale"
+        );
+        assert_eq!(
+            pick_vendor(addr, &BTreeSet::from(["Tailscale", "Zscaler"])),
+            "Tailscale"
+        );
+        assert_eq!(pick_vendor(addr, &BTreeSet::new()), "Tailscale");
+        assert_eq!(pick_vendor(None, &BTreeSet::from(["Zscaler"])), "Zscaler");
+        assert_eq!(
+            pick_vendor(None, &BTreeSet::from(["Mullvad", "Zscaler"])),
+            ""
+        );
+    }
 
     /// The Ubuntu USB-dongle lesson: a wired interface coming up while Wi-Fi
     /// keeps the default route must be announced — with the "default route
