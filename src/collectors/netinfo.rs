@@ -14,9 +14,10 @@ use crate::app::{AppState, LinkMedium, NetInfo};
 pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc<Notify>) {
     let mut ticker = tokio::time::interval(Duration::from_secs(5));
     // Identifying the VPN behind a tunnel can fall back to scanning the process
-    // table, so the answer is cached per tunnel device rather than redone every
-    // tick.
-    let mut vendor_cache: Option<(String, String)> = None;
+    // table, so the answer is cached per tunnel rather than redone every tick.
+    // Keyed on the device *and* its addresses: macOS hands a freed utunN to
+    // whichever VPN connects next, and a name-only key kept the old vendor.
+    let mut vendor_cache: Option<(TunnelAddrs, String)> = None;
     // The DHCP server behind the current lease barely ever changes, so it is
     // asked for once per attachment (a lease-file read or one-line shell-out)
     // and cached — keyed on interface + gateway, which is what a new
@@ -133,14 +134,18 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc
                 info.underlay_iface = iface;
             }
             if info.tunnel.is_some() {
+                let dev = info.tunnel_iface.clone();
+                let addrs = tokio::task::spawn_blocking(move || tunnel_addrs(dev))
+                    .await
+                    .unwrap_or_default();
                 let vendor = match &vendor_cache {
-                    Some((name, v)) if *name == info.tunnel_iface => v.clone(),
+                    Some((key, v)) if *key == addrs => v.clone(),
                     _ => {
-                        let dev = info.tunnel_iface.clone();
-                        let v = tokio::task::spawn_blocking(move || tunnel_vendor(dev))
+                        let key = addrs.clone();
+                        let v = tokio::task::spawn_blocking(move || tunnel_vendor(&addrs))
                             .await
                             .unwrap_or_default();
-                        vendor_cache = Some((info.tunnel_iface.clone(), v.clone()));
+                        vendor_cache = Some((key, v.clone()));
                         v
                     }
                 };
@@ -753,19 +758,50 @@ fn vendor_from_addrs(v4: &[Ipv4Addr], v6: &[Ipv6Addr]) -> Option<&'static str> {
         .map(|vpn| vpn.display)
 }
 
-/// Identify the VPN carrying `iface_name`. Returns an empty string when nothing
-/// can be pinned down — the tunnel is still reported, just unnamed, which beats
-/// naming the wrong one.
-fn tunnel_vendor(iface_name: String) -> String {
-    let by_addr = netdev::get_interfaces()
+/// A tunnel device and the addresses on it right now.
+#[derive(Clone, Default, PartialEq)]
+struct TunnelAddrs {
+    iface: String,
+    v4: Vec<Ipv4Addr>,
+    v6: Vec<Ipv6Addr>,
+}
+
+fn tunnel_addrs(iface_name: String) -> TunnelAddrs {
+    let (v4, v6) = netdev::get_interfaces()
         .into_iter()
         .find(|i| i.name == iface_name)
-        .and_then(|iface| {
-            let v4: Vec<Ipv4Addr> = iface.ipv4.iter().map(|n| n.addr()).collect();
-            let v6: Vec<Ipv6Addr> = iface.ipv6.iter().map(|n| n.addr()).collect();
-            vendor_from_addrs(&v4, &v6)
-        });
-    pick_vendor(by_addr, &running_vpns())
+        .map(|iface| {
+            (
+                iface.ipv4.iter().map(|n| n.addr()).collect(),
+                iface.ipv6.iter().map(|n| n.addr()).collect(),
+            )
+        })
+        .unwrap_or_default();
+    TunnelAddrs {
+        iface: iface_name,
+        v4,
+        v6,
+    }
+}
+
+/// Identify the VPN carrying a tunnel. Returns an empty string when nothing
+/// can be pinned down — the tunnel is still reported, just unnamed, which beats
+/// naming the wrong one.
+fn tunnel_vendor(t: &TunnelAddrs) -> String {
+    pick_vendor(
+        vendor_from_addrs(&t.v4, &t.v6),
+        in_shared_cgnat(&t.v4),
+        &running_vpns(),
+    )
+}
+
+/// 100.64.0.0/10 is carrier-grade NAT space that several clients carve their
+/// tunnel addresses from: Tailscale owns the whole /10 in [`KNOWN_VPNS`], WARP
+/// a /12 inside it, and Zscaler a configurable /16 anywhere in it. An address
+/// there names a candidate, not an answer.
+fn in_shared_cgnat(v4: &[Ipv4Addr]) -> bool {
+    v4.iter()
+        .any(|a| in_v4(*a, Ipv4Addr::new(100, 64, 0, 0), 10))
 }
 
 /// VPN clients with a process running right now.
@@ -788,10 +824,13 @@ fn running_vpns() -> std::collections::BTreeSet<&'static str> {
     hits
 }
 
-/// Address ranges overlap (Zscaler also uses Tailscale's 100.64/10), so an
-/// address match only stands when its client runs or no single other client does.
+/// An address match in a range only one client uses settles it. One in the
+/// shared CGNAT space (see [`in_shared_cgnat`]) stands only when its client is
+/// running or no single other client is; otherwise the sole running client is
+/// the better answer.
 fn pick_vendor(
     by_addr: Option<&'static str>,
+    shared: bool,
     running: &std::collections::BTreeSet<&'static str>,
 ) -> String {
     let sole = if running.len() == 1 {
@@ -800,7 +839,7 @@ fn pick_vendor(
         None
     };
     match (by_addr, sole) {
-        (Some(v), _) if running.contains(v) => v,
+        (Some(v), _) if !shared || running.contains(v) => v,
         (_, Some(s)) => s,
         (Some(v), None) => v,
         (None, None) => "",
@@ -820,21 +859,37 @@ mod tests {
         use std::collections::BTreeSet;
         let addr = vendor_from_addrs(&[Ipv4Addr::new(100, 64, 0, 1)], &[]);
         assert_eq!(addr, Some("Tailscale"));
-        assert_eq!(pick_vendor(addr, &BTreeSet::from(["Zscaler"])), "Zscaler");
         assert_eq!(
-            pick_vendor(addr, &BTreeSet::from(["Tailscale"])),
+            pick_vendor(addr, true, &BTreeSet::from(["Zscaler"])),
+            "Zscaler"
+        );
+        assert_eq!(
+            pick_vendor(addr, true, &BTreeSet::from(["Tailscale"])),
             "Tailscale"
         );
         assert_eq!(
-            pick_vendor(addr, &BTreeSet::from(["Tailscale", "Zscaler"])),
+            pick_vendor(addr, true, &BTreeSet::from(["Tailscale", "Zscaler"])),
             "Tailscale"
         );
-        assert_eq!(pick_vendor(addr, &BTreeSet::new()), "Tailscale");
-        assert_eq!(pick_vendor(None, &BTreeSet::from(["Zscaler"])), "Zscaler");
+        assert_eq!(pick_vendor(addr, true, &BTreeSet::new()), "Tailscale");
         assert_eq!(
-            pick_vendor(None, &BTreeSet::from(["Mullvad", "Zscaler"])),
+            pick_vendor(None, false, &BTreeSet::from(["Zscaler"])),
+            "Zscaler"
+        );
+        assert_eq!(
+            pick_vendor(None, false, &BTreeSet::from(["Mullvad", "Zscaler"])),
             ""
         );
+
+        // Outside the shared space the address settles it: a Mullvad tunnel
+        // is Mullvad even when the only client recognised is another one.
+        let mullvad = vendor_from_addrs(&[Ipv4Addr::new(10, 64, 0, 7)], &[]);
+        assert!(!super::in_shared_cgnat(&[Ipv4Addr::new(10, 64, 0, 7)]));
+        assert_eq!(
+            pick_vendor(mullvad, false, &BTreeSet::from(["WireGuard"])),
+            "Mullvad"
+        );
+        assert!(super::in_shared_cgnat(&[Ipv4Addr::new(100, 64, 0, 1)]));
     }
 
     /// The Ubuntu USB-dongle lesson: a wired interface coming up while Wi-Fi
