@@ -3,7 +3,8 @@
 //! (`system_profiler SPAirPortDataType`) is slow (~10-15s, it scans), so it runs
 //! on a long cadence and must not gate the fast base-info refresh.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -29,7 +30,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>) {
             _ = refresh.notified() => {}
         }
 
-        let is_wifi = state.lock().unwrap().netinfo.medium == crate::app::LinkMedium::WiFi;
+        let is_wifi = state.lock().netinfo.medium == crate::app::LinkMedium::WiFi;
         if !is_wifi {
             continue;
         }
@@ -45,7 +46,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>) {
             continue;
         };
         {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock();
             let known = !w.ssid.is_empty() && !w.ssid.contains("redacted");
             if known {
                 if let Some(prev) = last_ssid.as_deref()

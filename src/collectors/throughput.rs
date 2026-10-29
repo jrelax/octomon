@@ -2,7 +2,8 @@
 //! Focuses on the default-route interface when known, else sums non-loopback
 //! interfaces.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use sysinfo::Networks;
 
@@ -34,7 +35,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config) {
         // captured at startup — otherwise switching Wi-Fi networks, plugging in
         // Ethernet, or a VPN coming up leaves this reading a dead interface.
         let (want, underlay) = {
-            let s = state.lock().unwrap();
+            let s = state.lock();
             (
                 Some(s.netinfo.iface.clone()).filter(|n| !n.is_empty()),
                 Some(s.netinfo.underlay_iface.clone()).filter(|n| !n.is_empty()),
@@ -123,7 +124,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config) {
         let switched = prev_iface.as_deref() != Some(label.as_str());
         prev_iface = Some(label.clone());
         if switched {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock();
             s.throughput.iface = label.clone();
             s.throughput.down_bps = 0.0;
             s.throughput.up_bps = 0.0;
@@ -138,7 +139,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, cfg: Config) {
         let down_bps = down as f64 / secs;
         let up_bps = up as f64 / secs;
 
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock();
         s.throughput.iface = label.clone();
         s.throughput.down_bps = down_bps;
         s.throughput.up_bps = up_bps;

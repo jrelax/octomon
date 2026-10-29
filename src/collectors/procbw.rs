@@ -7,9 +7,10 @@
 //! the current rate alongside. Exits early (marking unsupported) where the
 //! platform has no unprivileged source.
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::{AppState, ProcBandwidth, ProcStatus, RemoteBandwidth};
@@ -256,14 +257,14 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
                 "per-process bandwidth is unavailable on this platform — the talkers table stays empty"
             },
         );
-        state.lock().unwrap().proc_status = if needs_privilege {
+        state.lock().proc_status = if needs_privilege {
             ProcStatus::NeedsPrivilege
         } else {
             ProcStatus::Unsupported
         };
         return;
     }
-    state.lock().unwrap().proc_status = ProcStatus::Supported;
+    state.lock().proc_status = ProcStatus::Supported;
 
     // Counter key -> (bytes_in, bytes_out, retx) from the previous sample. Keyed
     // by the counter, not the process: on Linux each sample is one socket, and
@@ -298,7 +299,7 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
         let secs = now.duration_since(prev_at).as_secs_f64().max(0.001);
 
         // A reset from the UI wipes the session, not just the tables.
-        if state.lock().unwrap().bw_reset {
+        if state.lock().bw_reset {
             procs.clear();
             remotes.clear();
         }
@@ -377,7 +378,7 @@ pub async fn run(state: Arc<Mutex<AppState>>) {
         prev_at = now;
         primed = true;
 
-        let mut st = state.lock().unwrap();
+        let mut st = state.lock();
         st.bw_reset = false;
         // Paused means the tables hold still. Aggregation carries on above,
         // so resuming shows the true totals. The screen is drawn from a

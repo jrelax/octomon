@@ -1,8 +1,9 @@
 //! Network identity from `netdev`: addresses, MAC, gateway, link type & speed,
 //! DHCP and DNS. Re-probed periodically to pick up network changes.
 
+use parking_lot::Mutex;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use netdev::interface::types::InterfaceType;
@@ -41,10 +42,10 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc
         let current: std::collections::HashMap<String, LinkMedium> =
             physical_interfaces().into_iter().collect();
         if let Some(prev) = known_ifaces.as_ref() {
-            let default_name = state.lock().unwrap().netinfo.iface.clone();
+            let default_name = state.lock().netinfo.iface.clone();
             let messages = iface_changes(prev, &current, &default_name);
             if !messages.is_empty() {
-                let mut s = state.lock().unwrap();
+                let mut s = state.lock();
                 for (name, up, m) in messages {
                     s.push_event(
                         crate::verdict::Severity::Info,
@@ -74,7 +75,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc
         known_ifaces = Some(current);
 
         if netdev::get_default_interface().is_err() {
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock();
             s.link_lost = true;
             if !link_lost && !s.netinfo.iface.is_empty() {
                 link_lost = true;
@@ -164,7 +165,7 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc
             }
             // Preserve Wi-Fi details, which are populated on a slower cadence by
             // the dedicated wifi collector, across these frequent base refreshes.
-            let mut s = state.lock().unwrap();
+            let mut s = state.lock();
             let was = s.netinfo.identity();
             let now = info.identity();
             let before = describe_attachment(&s.netinfo);
