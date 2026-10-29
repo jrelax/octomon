@@ -15,13 +15,28 @@ pub const PROGRAM: &str = "tracert";
 #[cfg(not(windows))]
 pub const PROGRAM: &str = "traceroute";
 
+/// The Linux traceroute's own name on Debian and Ubuntu, where `traceroute`
+/// is an alternative that GNU inetutils can take over. Ubuntu 26.04 ranks
+/// inetutils first even with the `traceroute` package installed, and its
+/// dialect rejects `-n` and prints `2.9ms` with no space, so every trace
+/// failed with "answered no hops".
+#[cfg(target_os = "linux")]
+const LINUX_TRACEROUTE: &str = "/usr/bin/traceroute.db";
+
 /// The binary for this destination. macOS's `traceroute` is v4-only and
 /// refuses a v6 literal; `traceroute6` takes the same flags. Linux's
 /// `traceroute` and Windows's `tracert` infer the family from the address.
+/// On Linux the real traceroute is used by its own name when it is installed
+/// (`/usr/bin/traceroute.db`). Every trace goes through here, so the binary
+/// that runs and the one named in an error are the same.
 pub fn program(dest: &str) -> &'static str {
     #[cfg(target_os = "macos")]
     if dest.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_ipv6()) {
         return "traceroute6";
+    }
+    #[cfg(target_os = "linux")]
+    if std::path::Path::new(LINUX_TRACEROUTE).exists() {
+        return LINUX_TRACEROUTE;
     }
     let _ = dest;
     PROGRAM
