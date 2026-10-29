@@ -138,6 +138,12 @@ pub async fn run(state: Arc<Mutex<AppState>>, refresh: Arc<Notify>, changed: Arc
                 let addrs = tokio::task::spawn_blocking(move || tunnel_addrs(dev))
                     .await
                     .unwrap_or_default();
+                info.tunnel_addrs = addrs
+                    .v4
+                    .iter()
+                    .map(|a| a.to_string())
+                    .chain(addrs.v6.iter().map(|a| a.to_string()))
+                    .collect();
                 let vendor = match &vendor_cache {
                     Some((key, v)) if *key == addrs => v.clone(),
                     _ => {
@@ -375,6 +381,7 @@ fn build(iface: &netdev::Interface) -> NetInfo {
         } else {
             String::new()
         },
+        tunnel_addrs: Vec::new(), // filled by the caller with the vendor
         tunnel_is_split: false,
         // Filled by the caller when the tunnel holds the default route.
         underlay_gateway_ip: String::new(),
